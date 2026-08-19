@@ -44,7 +44,7 @@
     let samplingActive   = false;
     let samplingTimer    = null;
     let samplingInterval = null;
-    let sampleBuffer     = { ph: [], tds: [] };
+    let sampleBuffer     = { ph: [], tds: [], ph_adc: [], ph_voltage: [], tds_adc: [], tds_voltage: [] };
     let sampleTimeLeft   = 0;
     let sampleResult     = null;
 
@@ -84,7 +84,7 @@
     function startSampling(durationMin) {
       if (samplingActive) return;
       const durationSec = durationMin * 60;
-      sampleBuffer = { ph: [], tds: [] };
+      sampleBuffer = { ph: [], tds: [], ph_adc: [], ph_voltage: [], tds_adc: [], tds_voltage: [] };
       sampleResult = null;
       samplingActive = true;
       sampleTimeLeft = durationSec;
@@ -94,8 +94,12 @@
       samplingInterval = setInterval(() => {
         if (!lastData || !lastData.sensors) return;
         const s = lastData.sensors;
-        if (s.ph  !== undefined) sampleBuffer.ph.push(parseFloat(s.ph));
-        if (s.tds !== undefined) sampleBuffer.tds.push(parseFloat(s.tds));
+        if (s.ph  !== undefined)       sampleBuffer.ph.push(parseFloat(s.ph));
+        if (s.tds !== undefined)       sampleBuffer.tds.push(parseFloat(s.tds));
+        if (s.ph_adc !== undefined)    sampleBuffer.ph_adc.push(parseFloat(s.ph_adc));
+        if (s.ph_voltage !== undefined)sampleBuffer.ph_voltage.push(parseFloat(s.ph_voltage));
+        if (s.tds_adc !== undefined)   sampleBuffer.tds_adc.push(parseFloat(s.tds_adc));
+        if (s.tds_voltage !== undefined)sampleBuffer.tds_voltage.push(parseFloat(s.tds_voltage));
         updateSamplingUI();
       }, 5000);
 
@@ -114,9 +118,13 @@
 
       const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
       sampleResult = {
-        ph:      avg(sampleBuffer.ph),
-        tds:     avg(sampleBuffer.tds),
-        count:   sampleBuffer.ph.length,
+        ph:          avg(sampleBuffer.ph),
+        tds:         avg(sampleBuffer.tds),
+        ph_adc:      avg(sampleBuffer.ph_adc),
+        ph_voltage:  avg(sampleBuffer.ph_voltage),
+        tds_adc:     avg(sampleBuffer.tds_adc),
+        tds_voltage: avg(sampleBuffer.tds_voltage),
+        count:       sampleBuffer.ph.length,
       };
       updateSamplingUI();
     }
@@ -140,9 +148,14 @@
         btn.style.borderColor = '';
         document.getElementById('sample-status').textContent =
           `Selesai — ${sampleResult.count} sampel diambil`;
+        const fv = (v, d) => v !== null && !isNaN(v) ? v.toFixed(d) : '–';
         document.getElementById('sample-result').innerHTML =
-          `pH rata-rata: <strong>${sampleResult.ph !== null ? sampleResult.ph.toFixed(2) : '–'}</strong> &nbsp;|&nbsp; ` +
-          `TDS rata-rata: <strong>${sampleResult.tds !== null ? sampleResult.tds.toFixed(1) : '–'} ppm</strong>`;
+          `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin-top:4px;">` +
+          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">pH rata-rata</span><br><strong style="font-size:1.1rem">${fv(sampleResult.ph,2)}</strong></div>` +
+          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">TDS rata-rata</span><br><strong style="font-size:1.1rem">${fv(sampleResult.tds,1)} ppm</strong></div>` +
+          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">pH — ADC</span><br><code style="font-size:0.95rem">${fv(sampleResult.ph_adc,0)}</code> &nbsp;<span style="color:var(--text-muted);font-size:0.85rem">(${fv(sampleResult.ph_voltage,4)} V)</span></div>` +
+          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">TDS — ADC</span><br><code style="font-size:0.95rem">${fv(sampleResult.tds_adc,0)}</code> &nbsp;<span style="color:var(--text-muted);font-size:0.85rem">(${fv(sampleResult.tds_voltage,4)} V)</span></div>` +
+          `</div>`;
       } else {
         btn.textContent = 'Mulai sampling';
         btn.style.color = '';
