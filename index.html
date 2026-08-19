@@ -38,8 +38,9 @@
     const OFFLINE_THRESHOLD_SEC = 30; // Detik sebelum dianggap offline
 
     function formatTimestamp(unixTs) {
-      if (!unixTs || unixTs < 1000000000) return "–";
-      const d = new Date(unixTs * 1000);
+      if (!unixTs || unixTs < 1000) return "–";
+      // Firebase server timestamp sudah dalam milidetik
+      const d = new Date(unixTs);
       return d.toLocaleString("id-ID", {
         day:    "2-digit", month: "short", year: "numeric",
         hour:   "2-digit", minute: "2-digit", second: "2-digit"
@@ -47,14 +48,15 @@
     }
 
     function secondsAgo(unixTs) {
-      if (!unixTs || unixTs < 1000000000) return null;
-      return Math.floor(Date.now() / 1000) - unixTs;
+      if (!unixTs || unixTs < 1000) return null;
+      // Firebase server timestamp sudah dalam milidetik
+      return Math.floor((Date.now() - unixTs) / 1000);
     }
 
     function isOnline(lastSeen) {
       const ago = secondsAgo(lastSeen);
       if (ago === null) return false;
-      return ago < OFFLINE_THRESHOLD_SEC;
+      return ago >= 0 && ago < OFFLINE_THRESHOLD_SEC;
     }
 
     function formatValue(val, decimals = 2, unit = "") {
@@ -129,9 +131,12 @@
     // ============================================================
     const esp1Ref = ref(db, "hydroponic/esp1");
 
+    // Simpan data terakhir agar bisa di-rerender oleh timer
+    let lastData = null;
+
     onValue(esp1Ref, (snapshot) => {
-      const data = snapshot.val();
-      renderData(data);
+      lastData = snapshot.val();
+      renderData(lastData);
     }, (error) => {
       console.error("Firebase error:", error);
       document.getElementById("status-badge").textContent = "ERROR";
@@ -139,12 +144,11 @@
       document.getElementById("last-update").textContent = "Error: " + error.message;
     });
 
-    // Update "X detik lalu" setiap detik (tanpa re-query Firebase)
+    // Re-render setiap 5 detik untuk update status ONLINE/OFFLINE
+    // dan "X detik lalu" tanpa query ulang ke Firebase
     setInterval(() => {
-      const lastSeenEl = document.getElementById("last-seen-time");
-      // Re-render time-ago portion hanya jika ada data
-      // (Firebase listener sudah menyimpan nilai terbaru di snapshot)
-    }, 1000);
+      if (lastData) renderData(lastData);
+    }, 5000);
 
   </script>
 
