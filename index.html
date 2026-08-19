@@ -35,7 +35,18 @@
     // ============================================================
     //  HELPER
     // ============================================================
-    const OFFLINE_THRESHOLD_SEC = 30; // Detik sebelum dianggap offline
+    const OFFLINE_THRESHOLD_SEC = 30;
+
+    // ============================================================
+    //  SAMPLING CONFIG
+    // ============================================================
+    const SAMPLE_DURATION_SEC = 5 * 60; // 5 menit default
+    let samplingActive   = false;
+    let samplingTimer    = null;
+    let samplingInterval = null;
+    let sampleBuffer     = { ph: [], tds: [] };
+    let sampleTimeLeft   = 0;
+    let sampleResult     = null;
 
     function formatTimestamp(unixTs) {
       if (!unixTs || unixTs < 1000) return "–";
@@ -67,6 +78,80 @@
     // ============================================================
     //  RENDER UI
     // ============================================================
+    // ============================================================
+    //  FUNGSI SAMPLING
+    // ============================================================
+    function startSampling(durationMin) {
+      if (samplingActive) return;
+      const durationSec = durationMin * 60;
+      sampleBuffer = { ph: [], tds: [] };
+      sampleResult = null;
+      samplingActive = true;
+      sampleTimeLeft = durationSec;
+      updateSamplingUI();
+
+      // Ambil sample setiap 5 detik (sesuai interval ESP32)
+      samplingInterval = setInterval(() => {
+        if (!lastData || !lastData.sensors) return;
+        const s = lastData.sensors;
+        if (s.ph  !== undefined) sampleBuffer.ph.push(parseFloat(s.ph));
+        if (s.tds !== undefined) sampleBuffer.tds.push(parseFloat(s.tds));
+        updateSamplingUI();
+      }, 5000);
+
+      // Countdown per detik
+      samplingTimer = setInterval(() => {
+        sampleTimeLeft--;
+        if (sampleTimeLeft <= 0) stopSampling();
+        updateSamplingUI();
+      }, 1000);
+    }
+
+    function stopSampling() {
+      samplingActive = false;
+      clearInterval(samplingTimer);
+      clearInterval(samplingInterval);
+
+      const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+      sampleResult = {
+        ph:      avg(sampleBuffer.ph),
+        tds:     avg(sampleBuffer.tds),
+        count:   sampleBuffer.ph.length,
+      };
+      updateSamplingUI();
+    }
+
+    function updateSamplingUI() {
+      const panel = document.getElementById('sampling-panel');
+      const btn   = document.getElementById('btn-sample');
+      const mins  = Math.floor(sampleTimeLeft / 60);
+      const secs  = sampleTimeLeft % 60;
+
+      if (samplingActive) {
+        btn.textContent = 'Stop';
+        btn.style.color = 'var(--text-danger)';
+        btn.style.borderColor = 'var(--border-danger)';
+        document.getElementById('sample-status').textContent =
+          `Sampling… ${sampleBuffer.ph.length} data | sisa ${mins}:${String(secs).padStart(2,'0')}`;
+        document.getElementById('sample-result').textContent = '';
+      } else if (sampleResult) {
+        btn.textContent = 'Mulai sampling';
+        btn.style.color = '';
+        btn.style.borderColor = '';
+        document.getElementById('sample-status').textContent =
+          `Selesai — ${sampleResult.count} sampel diambil`;
+        document.getElementById('sample-result').innerHTML =
+          `pH rata-rata: <strong>${sampleResult.ph !== null ? sampleResult.ph.toFixed(2) : '–'}</strong> &nbsp;|&nbsp; ` +
+          `TDS rata-rata: <strong>${sampleResult.tds !== null ? sampleResult.tds.toFixed(1) : '–'} ppm</strong>`;
+      } else {
+        btn.textContent = 'Mulai sampling';
+        btn.style.color = '';
+        btn.style.borderColor = '';
+        document.getElementById('sample-status').textContent = 'Belum ada sesi sampling.';
+        document.getElementById('sample-result').textContent = '';
+      }
+    }
+
     function renderData(data) {
       if (!data) {
         document.getElementById("status-badge").textContent   = "TIDAK ADA DATA";
@@ -145,10 +230,19 @@
     });
 
     // Re-render setiap 5 detik untuk update status ONLINE/OFFLINE
-    // dan "X detik lalu" tanpa query ulang ke Firebase
     setInterval(() => {
       if (lastData) renderData(lastData);
     }, 5000);
+
+    // Event listener tombol sampling
+    document.getElementById('btn-sample').addEventListener('click', () => {
+      if (samplingActive) {
+        stopSampling();
+      } else {
+        const dur = parseFloat(document.getElementById('sample-duration').value) || 5;
+        startSampling(dur);
+      }
+    });
 
   </script>
 
@@ -444,6 +538,33 @@
       <div class="info-item">
         <div class="label">Node ID</div>
         <div class="value">ESP1</div>
+      </div>
+    </div>
+
+    <!-- Sampling Panel -->
+    <div class="node-card" id="sampling-panel" style="margin-bottom:24px;">
+      <div class="node-header" style="margin-bottom:16px;">
+        <div class="node-name">📊 Rata-rata sampling</div>
+      </div>
+
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+        <label style="font-size:0.85rem; color:var(--text-muted); white-space:nowrap;">Durasi:</label>
+        <select id="sample-duration" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 10px; font-size:0.85rem; cursor:pointer;">
+          <option value="1">1 menit</option>
+          <option value="3">3 menit</option>
+          <option value="5" selected>5 menit</option>
+          <option value="10">10 menit</option>
+          <option value="30">30 menit</option>
+        </select>
+        <button id="btn-sample" style="background:transparent; color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 18px; font-size:0.85rem; cursor:pointer; transition:all 0.2s;">
+          Mulai sampling
+        </button>
+      </div>
+
+      <div id="sample-status" style="font-size:0.82rem; color:var(--text-muted); margin-bottom:8px;">
+        Belum ada sesi sampling.
+      </div>
+      <div id="sample-result" style="font-size:1rem; color:var(--text); font-weight:500;">
       </div>
     </div>
 
