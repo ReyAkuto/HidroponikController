@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hidroponik IoT Monitor</title>
+
+  <!-- Firebase Web SDK v9 (modular via CDN) -->
+  <script type="module">
+    import { initializeApp }          from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+    // ============================================================
+    //  KONFIGURASI FIREBASE WEB
+    //  Ganti dengan konfigurasi project Firebase Anda
+    //  (Firebase Console → Project Settings → Your apps → Web)
+    // ============================================================
+    const firebaseConfig = {
+      apiKey:            "AIzaSyBykwJKz-HYVoM1NSlYZDdr-2adru26Noo",
+      authDomain:        "hidroponikcontroller.firebaseapp.com",
+      databaseURL:       "https://hidroponikcontroller-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId:         "hidroponikcontroller",
+      storageBucket:     "hidroponikcontroller.firebasestorage.app",
+      messagingSenderId: "32022508276",
+      appId:             "1:32022508276:web:89e9e98ab7dcac033364a1",
+      measurementId:     "G-7Q4S1XQTRX"
+    };
+
+    // ============================================================
+    //  INISIALISASI FIREBASE
+    // ============================================================
+    const app = initializeApp(firebaseConfig);
+    const db  = getDatabase(app);
+
+    // ============================================================
+    //  HELPER
+    // ============================================================
+    const OFFLINE_THRESHOLD_SEC = 30; // Detik sebelum dianggap offline
+
+    function formatTimestamp(unixTs) {
+      if (!unixTs || unixTs < 1000000000) return "–";
+      const d = new Date(unixTs * 1000);
+      return d.toLocaleString("id-ID", {
+        day:    "2-digit", month: "short", year: "numeric",
+        hour:   "2-digit", minute: "2-digit", second: "2-digit"
+      });
+    }
+
+    function secondsAgo(unixTs) {
+      if (!unixTs || unixTs < 1000000000) return null;
+      return Math.floor(Date.now() / 1000) - unixTs;
+    }
+
+    function isOnline(lastSeen) {
+      const ago = secondsAgo(lastSeen);
+      if (ago === null) return false;
+      return ago < OFFLINE_THRESHOLD_SEC;
+    }
+
+    function formatValue(val, decimals = 2, unit = "") {
+      if (val === null || val === undefined) return "–";
+      return parseFloat(val).toFixed(decimals) + (unit ? " " + unit : "");
+    }
+
+    // ============================================================
+    //  RENDER UI
+    // ============================================================
+    function renderData(data) {
+      if (!data) {
+        document.getElementById("status-badge").textContent   = "TIDAK ADA DATA";
+        document.getElementById("status-badge").className     = "badge badge-offline";
+        return;
+      }
+
+      const lastSeen = data.last_seen;
+      const online   = isOnline(lastSeen);
+      const ago      = secondsAgo(lastSeen);
+
+      // Status badge
+      const badge = document.getElementById("status-badge");
+      badge.textContent = online ? "ONLINE" : "OFFLINE";
+      badge.className   = "badge " + (online ? "badge-online" : "badge-offline");
+
+      // Last seen
+      document.getElementById("last-seen-time").textContent =
+        formatTimestamp(lastSeen) +
+        (ago !== null ? ` (${ago}s lalu)` : "");
+
+      // Sensors
+      const s = data.sensors || {};
+      document.getElementById("val-ph").textContent          = formatValue(s.ph, 2);
+      document.getElementById("val-tds").textContent         = formatValue(s.tds, 1, "ppm");
+      document.getElementById("val-temperature").textContent =
+        s.temperature !== null && s.temperature !== undefined
+          ? formatValue(s.temperature, 1, "°C")
+          : "Belum tersedia";
+
+      // Connection
+      const c = data.connection || {};
+      document.getElementById("val-mode").textContent  = (c.mode  || "–").toUpperCase();
+
+      // pH indicator color
+      const phCard = document.getElementById("card-ph");
+      const phVal  = parseFloat(s.ph);
+      phCard.classList.remove("sensor-low", "sensor-ok", "sensor-high");
+      if (!isNaN(phVal)) {
+        if      (phVal < 5.5) phCard.classList.add("sensor-low");
+        else if (phVal > 7.0) phCard.classList.add("sensor-high");
+        else                  phCard.classList.add("sensor-ok");
+      }
+
+      // TDS indicator color
+      const tdsCard = document.getElementById("card-tds");
+      const tdsVal  = parseFloat(s.tds);
+      tdsCard.classList.remove("sensor-low", "sensor-ok", "sensor-high");
+      if (!isNaN(tdsVal)) {
+        if      (tdsVal < 400)  tdsCard.classList.add("sensor-low");
+        else if (tdsVal > 1500) tdsCard.classList.add("sensor-high");
+        else                    tdsCard.classList.add("sensor-ok");
+      }
+
+      // Last update counter
+      document.getElementById("last-update").textContent =
+        "Data diperbarui: " + new Date().toLocaleTimeString("id-ID");
+    }
+
+    // ============================================================
+    //  FIREBASE LISTENER (Realtime)
+    // ============================================================
+    const esp1Ref = ref(db, "hydroponic/esp1");
+
+    onValue(esp1Ref, (snapshot) => {
+      const data = snapshot.val();
+      renderData(data);
+    }, (error) => {
+      console.error("Firebase error:", error);
+      document.getElementById("status-badge").textContent = "ERROR";
+      document.getElementById("status-badge").className  = "badge badge-offline";
+      document.getElementById("last-update").textContent = "Error: " + error.message;
+    });
+
+    // Update "X detik lalu" setiap detik (tanpa re-query Firebase)
+    setInterval(() => {
+      const lastSeenEl = document.getElementById("last-seen-time");
+      // Re-render time-ago portion hanya jika ada data
+      // (Firebase listener sudah menyimpan nilai terbaru di snapshot)
+    }, 1000);
+
+  </script>
+
+  <style>
+    /* ============================================================
+       RESET & BASE
+    ============================================================ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #0f1117;
+      --surface:    #1a1d27;
+      --surface2:   #22263a;
+      --border:     #2e3250;
+      --text:       #e8eaf0;
+      --text-muted: #7b82a0;
+      --green:      #22c55e;
+      --red:        #ef4444;
+      --yellow:     #f59e0b;
+      --blue:       #3b82f6;
+      --radius:     12px;
+      --radius-sm:  8px;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px 16px 48px;
+    }
+
+    /* ============================================================
+       LAYOUT
+    ============================================================ */
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    /* ============================================================
+       HEADER
+    ============================================================ */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .header-title h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .header-title p {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+      margin-top: 2px;
+    }
+
+    /* ============================================================
+       STATUS BADGE
+    ============================================================ */
+    .badge {
+      display: inline-block;
+      padding: 6px 18px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+
+    .badge-online  { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .badge-offline { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3);  }
+
+    /* ============================================================
+       NODE CARD
+    ============================================================ */
+    .node-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .node-name {
+      font-size: 1rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      display: inline-block;
+    }
+    .badge-online  ~ .dot,
+    .dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    .dot.offline { background: var(--red); }
+
+    .node-meta {
+      font-size: 0.82rem;
+      color: var(--text-muted);
+    }
+
+    .node-meta span { margin-right: 16px; }
+    .node-meta strong { color: var(--text); }
+
+    /* ============================================================
+       SENSOR GRID
+    ============================================================ */
+    .sensor-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .sensor-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color 0.3s;
+    }
+
+    .sensor-card::before {
+      content: "";
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--blue);
+      border-radius: var(--radius) var(--radius) 0 0;
+    }
+
+    .sensor-card.sensor-ok::before   { background: var(--green); }
+    .sensor-card.sensor-low::before  { background: var(--yellow); }
+    .sensor-card.sensor-high::before { background: var(--red); }
+
+    .sensor-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+      margin-bottom: 8px;
+    }
+
+    .sensor-value {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.1;
+      letter-spacing: -0.5px;
+    }
+
+    .sensor-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* ============================================================
+       INFO GRID
+    ============================================================ */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .info-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+    }
+
+    .info-item .label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .info-item .value {
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+
+    /* ============================================================
+       FOOTER
+    ============================================================ */
+    .footer {
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 32px;
+    }
+
+    #last-update {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: right;
+      margin-bottom: 8px;
+    }
+
+    /* ============================================================
+       RESPONSIVE
+    ============================================================ */
+    @media (max-width: 480px) {
+      .header { flex-direction: column; align-items: flex-start; }
+      .sensor-value { font-size: 1.6rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="header-title">
+        <h1>🌿 Hidroponik IoT Monitor</h1>
+        <p>Pemantauan sensor tanaman secara realtime</p>
+      </div>
+      <span id="status-badge" class="badge badge-offline">MEMUAT…</span>
+    </div>
+
+    <!-- Last update -->
+    <p id="last-update">Menghubungkan ke Firebase…</p>
+
+    <!-- Node Info -->
+    <div class="node-card">
+      <div class="node-header">
+        <div class="node-name">
+          📡 ESP1 — Node Kebun
+        </div>
+      </div>
+      <div class="node-meta">
+        <span>Last seen: <strong id="last-seen-time">–</strong></span>
+      </div>
+    </div>
+
+    <!-- Sensor Cards -->
+    <div class="sensor-grid">
+
+      <div class="sensor-card" id="card-ph">
+        <div class="sensor-label">pH Air</div>
+        <div class="sensor-value" id="val-ph">–</div>
+        <div class="sensor-sub">Normal: 5.5 – 7.0</div>
+      </div>
+
+      <div class="sensor-card" id="card-tds">
+        <div class="sensor-label">TDS / Nutrisi</div>
+        <div class="sensor-value" id="val-tds">–</div>
+        <div class="sensor-sub">Normal: 400 – 1500 ppm</div>
+      </div>
+
+      <div class="sensor-card" id="card-temperature">
+        <div class="sensor-label">Suhu Air</div>
+        <div class="sensor-value" id="val-temperature">–</div>
+        <div class="sensor-sub">Sensor belum terpasang</div>
+      </div>
+
+    </div>
+
+    <!-- Connection Info -->
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="label">Mode Koneksi</div>
+        <div class="value" id="val-mode">–</div>
+      </div>
+      <div class="info-item">
+        <div class="label">Node ID</div>
+        <div class="value">ESP1</div>
+      </div>
+    </div>
+
+    <div class="footer">
+      Sistem Hidroponik IoT • Data diperbarui setiap ~5 detik via Firebase Realtime Database
+    </div>
+
+  </div>
+</body>
+</html>
