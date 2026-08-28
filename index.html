@@ -3,588 +3,753 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hidroponik IoT Monitor</title>
-
-  <!-- Firebase Web SDK v9 (modular via CDN) -->
-  <script type="module">
-    import { initializeApp }          from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-    import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-
-    // ============================================================
-    //  KONFIGURASI FIREBASE WEB
-    //  Ganti dengan konfigurasi project Firebase Anda
-    //  (Firebase Console → Project Settings → Your apps → Web)
-    // ============================================================
-    const firebaseConfig = {
-      apiKey:            "AIzaSyBykwJKz-HYVoM1NSlYZDdr-2adru26Noo",
-      authDomain:        "hidroponikcontroller.firebaseapp.com",
-      databaseURL:       "https://hidroponikcontroller-default-rtdb.asia-southeast1.firebasedatabase.app",
-      projectId:         "hidroponikcontroller",
-      storageBucket:     "hidroponikcontroller.firebasestorage.app",
-      messagingSenderId: "32022508276",
-      appId:             "1:32022508276:web:89e9e98ab7dcac033364a1",
-      measurementId:     "G-7Q4S1XQTRX"
-    };
-
-    // ============================================================
-    //  INISIALISASI FIREBASE
-    // ============================================================
-    const app = initializeApp(firebaseConfig);
-    const db  = getDatabase(app);
-
-    // ============================================================
-    //  HELPER
-    // ============================================================
-    const OFFLINE_THRESHOLD_SEC = 30;
-
-    // ============================================================
-    //  SAMPLING CONFIG
-    // ============================================================
-    const SAMPLE_DURATION_SEC = 5 * 60; // 5 menit default
-    let samplingActive   = false;
-    let samplingTimer    = null;
-    let samplingInterval = null;
-    let sampleBuffer     = { ph: [], tds: [], ph_adc: [], ph_voltage: [], tds_adc: [], tds_voltage: [] };
-    let sampleTimeLeft   = 0;
-    let sampleResult     = null;
-
-    function formatTimestamp(unixTs) {
-      if (!unixTs || unixTs < 1000) return "–";
-      // Firebase server timestamp sudah dalam milidetik
-      const d = new Date(unixTs);
-      return d.toLocaleString("id-ID", {
-        day:    "2-digit", month: "short", year: "numeric",
-        hour:   "2-digit", minute: "2-digit", second: "2-digit"
-      });
-    }
-
-    function secondsAgo(unixTs) {
-      if (!unixTs || unixTs < 1000) return null;
-      // Firebase server timestamp sudah dalam milidetik
-      return Math.floor((Date.now() - unixTs) / 1000);
-    }
-
-    function isOnline(lastSeen) {
-      const ago = secondsAgo(lastSeen);
-      if (ago === null) return false;
-      return ago >= 0 && ago < OFFLINE_THRESHOLD_SEC;
-    }
-
-    function formatValue(val, decimals = 2, unit = "") {
-      if (val === null || val === undefined) return "–";
-      return parseFloat(val).toFixed(decimals) + (unit ? " " + unit : "");
-    }
-
-    // ============================================================
-    //  RENDER UI
-    // ============================================================
-    // ============================================================
-    //  FUNGSI SAMPLING
-    // ============================================================
-    function startSampling(durationMin) {
-      if (samplingActive) return;
-      const durationSec = durationMin * 60;
-      sampleBuffer = { ph: [], tds: [], ph_adc: [], ph_voltage: [], tds_adc: [], tds_voltage: [] };
-      sampleResult = null;
-      samplingActive = true;
-      sampleTimeLeft = durationSec;
-      updateSamplingUI();
-
-      // Ambil sample setiap 5 detik (sesuai interval ESP32)
-      samplingInterval = setInterval(() => {
-        if (!lastData || !lastData.sensors) return;
-        const s = lastData.sensors;
-        if (s.ph  !== undefined)       sampleBuffer.ph.push(parseFloat(s.ph));
-        if (s.tds !== undefined)       sampleBuffer.tds.push(parseFloat(s.tds));
-        if (s.ph_adc !== undefined)    sampleBuffer.ph_adc.push(parseFloat(s.ph_adc));
-        if (s.ph_voltage !== undefined)sampleBuffer.ph_voltage.push(parseFloat(s.ph_voltage));
-        if (s.tds_adc !== undefined)   sampleBuffer.tds_adc.push(parseFloat(s.tds_adc));
-        if (s.tds_voltage !== undefined)sampleBuffer.tds_voltage.push(parseFloat(s.tds_voltage));
-        updateSamplingUI();
-      }, 5000);
-
-      // Countdown per detik
-      samplingTimer = setInterval(() => {
-        sampleTimeLeft--;
-        if (sampleTimeLeft <= 0) stopSampling();
-        updateSamplingUI();
-      }, 1000);
-    }
-
-    function stopSampling() {
-      samplingActive = false;
-      clearInterval(samplingTimer);
-      clearInterval(samplingInterval);
-
-      const avg = arr => arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
-      sampleResult = {
-        ph:          avg(sampleBuffer.ph),
-        tds:         avg(sampleBuffer.tds),
-        ph_adc:      avg(sampleBuffer.ph_adc),
-        ph_voltage:  avg(sampleBuffer.ph_voltage),
-        tds_adc:     avg(sampleBuffer.tds_adc),
-        tds_voltage: avg(sampleBuffer.tds_voltage),
-        count:       sampleBuffer.ph.length,
-      };
-      updateSamplingUI();
-    }
-
-    function updateSamplingUI() {
-      const panel = document.getElementById('sampling-panel');
-      const btn   = document.getElementById('btn-sample');
-      const mins  = Math.floor(sampleTimeLeft / 60);
-      const secs  = sampleTimeLeft % 60;
-
-      if (samplingActive) {
-        btn.textContent = 'Stop';
-        btn.style.color = 'var(--text-danger)';
-        btn.style.borderColor = 'var(--border-danger)';
-        document.getElementById('sample-status').textContent =
-          `Sampling… ${sampleBuffer.ph.length} data | sisa ${mins}:${String(secs).padStart(2,'0')}`;
-        document.getElementById('sample-result').textContent = '';
-      } else if (sampleResult) {
-        btn.textContent = 'Mulai sampling';
-        btn.style.color = '';
-        btn.style.borderColor = '';
-        document.getElementById('sample-status').textContent =
-          `Selesai — ${sampleResult.count} sampel diambil`;
-        const fv = (v, d) => v !== null && !isNaN(v) ? v.toFixed(d) : '–';
-        document.getElementById('sample-result').innerHTML =
-          `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 24px;margin-top:4px;">` +
-          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">pH rata-rata</span><br><strong style="font-size:1.1rem">${fv(sampleResult.ph,2)}</strong></div>` +
-          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">TDS rata-rata</span><br><strong style="font-size:1.1rem">${fv(sampleResult.tds,1)} ppm</strong></div>` +
-          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">pH — ADC</span><br><code style="font-size:0.95rem">${fv(sampleResult.ph_adc,0)}</code> &nbsp;<span style="color:var(--text-muted);font-size:0.85rem">(${fv(sampleResult.ph_voltage,4)} V)</span></div>` +
-          `<div><span style="font-size:0.75rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">TDS — ADC</span><br><code style="font-size:0.95rem">${fv(sampleResult.tds_adc,0)}</code> &nbsp;<span style="color:var(--text-muted);font-size:0.85rem">(${fv(sampleResult.tds_voltage,4)} V)</span></div>` +
-          `</div>`;
-      } else {
-        btn.textContent = 'Mulai sampling';
-        btn.style.color = '';
-        btn.style.borderColor = '';
-        document.getElementById('sample-status').textContent = 'Belum ada sesi sampling.';
-        document.getElementById('sample-result').textContent = '';
-      }
-    }
-
-    function renderData(data) {
-      if (!data) {
-        document.getElementById("status-badge").textContent   = "TIDAK ADA DATA";
-        document.getElementById("status-badge").className     = "badge badge-offline";
-        return;
-      }
-
-      const lastSeen = data.last_seen;
-      const online   = isOnline(lastSeen);
-      const ago      = secondsAgo(lastSeen);
-
-      // Status badge
-      const badge = document.getElementById("status-badge");
-      badge.textContent = online ? "ONLINE" : "OFFLINE";
-      badge.className   = "badge " + (online ? "badge-online" : "badge-offline");
-
-      // Last seen
-      document.getElementById("last-seen-time").textContent =
-        formatTimestamp(lastSeen) +
-        (ago !== null ? ` (${ago}s lalu)` : "");
-
-      // Sensors
-      const s = data.sensors || {};
-      document.getElementById("val-ph").textContent          = formatValue(s.ph, 2);
-      document.getElementById("val-tds").textContent         = formatValue(s.tds, 1, "ppm");
-      document.getElementById("val-temperature").textContent =
-        s.temperature !== null && s.temperature !== undefined && s.temperature !== -1
-          ? formatValue(s.temperature, 1, "°C")
-          : "Belum tersedia";
-
-      // Connection
-      const c = data.connection || {};
-      document.getElementById("val-mode").textContent  = (c.mode  || "–").toUpperCase();
-
-      // pH indicator color
-      const phCard = document.getElementById("card-ph");
-      const phVal  = parseFloat(s.ph);
-      phCard.classList.remove("sensor-low", "sensor-ok", "sensor-high");
-      if (!isNaN(phVal)) {
-        if      (phVal < 5.5) phCard.classList.add("sensor-low");
-        else if (phVal > 7.0) phCard.classList.add("sensor-high");
-        else                  phCard.classList.add("sensor-ok");
-      }
-
-      // TDS indicator color
-      const tdsCard = document.getElementById("card-tds");
-      const tdsVal  = parseFloat(s.tds);
-      tdsCard.classList.remove("sensor-low", "sensor-ok", "sensor-high");
-      if (!isNaN(tdsVal)) {
-        if      (tdsVal < 400)  tdsCard.classList.add("sensor-low");
-        else if (tdsVal > 1500) tdsCard.classList.add("sensor-high");
-        else                    tdsCard.classList.add("sensor-ok");
-      }
-
-      // Last update counter
-      document.getElementById("last-update").textContent =
-        "Data diperbarui: " + new Date().toLocaleTimeString("id-ID");
-    }
-
-    // ============================================================
-    //  FIREBASE LISTENER (Realtime)
-    // ============================================================
-    const esp1Ref = ref(db, "hydroponic/esp1");
-
-    // Simpan data terakhir agar bisa di-rerender oleh timer
-    let lastData = null;
-
-    onValue(esp1Ref, (snapshot) => {
-      lastData = snapshot.val();
-      renderData(lastData);
-    }, (error) => {
-      console.error("Firebase error:", error);
-      document.getElementById("status-badge").textContent = "ERROR";
-      document.getElementById("status-badge").className  = "badge badge-offline";
-      document.getElementById("last-update").textContent = "Error: " + error.message;
-    });
-
-    // Re-render setiap 5 detik untuk update status ONLINE/OFFLINE
-    setInterval(() => {
-      if (lastData) renderData(lastData);
-    }, 5000);
-
-    // Event listener tombol sampling
-    document.getElementById('btn-sample').addEventListener('click', () => {
-      if (samplingActive) {
-        stopSampling();
-      } else {
-        const dur = parseFloat(document.getElementById('sample-duration').value) || 5;
-        startSampling(dur);
-      }
-    });
-
-  </script>
-
-  <style>
-    /* ============================================================
-       RESET & BASE
-    ============================================================ */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    :root {
-      --bg:         #0f1117;
-      --surface:    #1a1d27;
-      --surface2:   #22263a;
-      --border:     #2e3250;
-      --text:       #e8eaf0;
-      --text-muted: #7b82a0;
-      --green:      #22c55e;
-      --red:        #ef4444;
-      --yellow:     #f59e0b;
-      --blue:       #3b82f6;
-      --radius:     12px;
-      --radius-sm:  8px;
-    }
-
-    body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-      padding: 24px 16px 48px;
-    }
-
-    /* ============================================================
-       LAYOUT
-    ============================================================ */
-    .container {
-      max-width: 900px;
-      margin: 0 auto;
-    }
-
-    /* ============================================================
-       HEADER
-    ============================================================ */
-    .header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-bottom: 32px;
-    }
-
-    .header-title h1 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      letter-spacing: -0.3px;
-    }
-
-    .header-title p {
-      color: var(--text-muted);
-      font-size: 0.85rem;
-      margin-top: 2px;
-    }
-
-    /* ============================================================
-       STATUS BADGE
-    ============================================================ */
-    .badge {
-      display: inline-block;
-      padding: 6px 18px;
-      border-radius: 999px;
-      font-size: 0.8rem;
-      font-weight: 700;
-      letter-spacing: 0.05em;
-    }
-
-    .badge-online  { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
-    .badge-offline { background: rgba(239,68,68,0.15);  color: var(--red);   border: 1px solid rgba(239,68,68,0.3);  }
-
-    /* ============================================================
-       NODE CARD
-    ============================================================ */
-    .node-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px 24px;
-      margin-bottom: 24px;
-    }
-
-    .node-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    .node-name {
-      font-size: 1rem;
-      font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .dot {
-      width: 9px; height: 9px;
-      border-radius: 50%;
-      background: var(--text-muted);
-      display: inline-block;
-    }
-    .badge-online  ~ .dot,
-    .dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
-    .dot.offline { background: var(--red); }
-
-    .node-meta {
-      font-size: 0.82rem;
-      color: var(--text-muted);
-    }
-
-    .node-meta span { margin-right: 16px; }
-    .node-meta strong { color: var(--text); }
-
-    /* ============================================================
-       SENSOR GRID
-    ============================================================ */
-    .sensor-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
-    }
-
-    .sensor-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      position: relative;
-      overflow: hidden;
-      transition: border-color 0.3s;
-    }
-
-    .sensor-card::before {
-      content: "";
-      position: absolute;
-      top: 0; left: 0; right: 0;
-      height: 3px;
-      background: var(--blue);
-      border-radius: var(--radius) var(--radius) 0 0;
-    }
-
-    .sensor-card.sensor-ok::before   { background: var(--green); }
-    .sensor-card.sensor-low::before  { background: var(--yellow); }
-    .sensor-card.sensor-high::before { background: var(--red); }
-
-    .sensor-label {
-      font-size: 0.78rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    .sensor-value {
-      font-size: 2rem;
-      font-weight: 700;
-      line-height: 1.1;
-      letter-spacing: -0.5px;
-    }
-
-    .sensor-sub {
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      margin-top: 6px;
-    }
-
-    /* ============================================================
-       INFO GRID
-    ============================================================ */
-    .info-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 12px;
-      margin-bottom: 20px;
-    }
-
-    .info-item {
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      padding: 14px 16px;
-    }
-
-    .info-item .label {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin-bottom: 4px;
-    }
-
-    .info-item .value {
-      font-size: 0.95rem;
-      font-weight: 600;
-    }
-
-    /* ============================================================
-       FOOTER
-    ============================================================ */
-    .footer {
-      text-align: center;
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      margin-top: 32px;
-    }
-
-    #last-update {
-      font-size: 0.78rem;
-      color: var(--text-muted);
-      text-align: right;
-      margin-bottom: 8px;
-    }
-
-    /* ============================================================
-       RESPONSIVE
-    ============================================================ */
-    @media (max-width: 480px) {
-      .header { flex-direction: column; align-items: flex-start; }
-      .sensor-value { font-size: 1.6rem; }
-    }
-  </style>
+  <title>Hydroponic Monitor</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <div class="container">
 
-    <!-- Header -->
-    <div class="header">
-      <div class="header-title">
-        <h1>🌿 Hidroponik IoT Monitor</h1>
-        <p>Pemantauan sensor tanaman secara realtime</p>
+<!-- ── Auth Overlay ────────────────────────────────────────── -->
+<div class="auth-overlay" id="auth-overlay">
+  <div class="auth-box">
+    <div class="auth-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2a5 5 0 0 1 5 5c0 2.5-1.5 4.5-3.5 5.4V20a1.5 1.5 0 0 1-3 0v-7.6C8.5 11.5 7 9.5 7 7a5 5 0 0 1 5-5z"/>
+      </svg>
+    </div>
+    <h2>Hydroponic Monitor</h2>
+    <p>Menghubungkan ke sistem…</p>
+    <div class="auth-spinner"></div>
+    <div class="auth-status" id="auth-status">Memverifikasi akses…</div>
+  </div>
+</div>
+
+<!-- ── App Shell ────────────────────────────────────────────── -->
+<div class="app-shell">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2a5 5 0 0 1 5 5c0 2.5-1.5 4.5-3.5 5.4V20a1.5 1.5 0 0 1-3 0v-7.6C8.5 11.5 7 9.5 7 7a5 5 0 0 1 5-5z"/>
+        </svg>
       </div>
-      <span id="status-badge" class="badge badge-offline">MEMUAT…</span>
+      <div class="logo-text">
+        <span>Hydroponic</span>
+        <span>Monitor</span>
+      </div>
     </div>
 
-    <!-- Last update -->
-    <p id="last-update">Menghubungkan ke Firebase…</p>
+    <nav class="sidebar-nav">
+      <div class="nav-label">Menu</div>
+      <button class="nav-item active" data-page="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        Dashboard
+      </button>
+      <button class="nav-item" data-page="monitoring">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+        </svg>
+        Monitoring
+      </button>
+      <button class="nav-item" data-page="riwayat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M3 3h18v18H3z"/><path d="M8 12h8M8 8h8M8 16h5"/>
+        </svg>
+        Riwayat
+      </button>
 
-    <!-- Node Info -->
-    <div class="node-card">
-      <div class="node-header">
-        <div class="node-name">
-          📡 ESP1 — Node Kebun
+      <div class="nav-label" style="margin-top:8px;">Perangkat</div>
+      <button class="nav-item" data-page="dashboard">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/>
+        </svg>
+        ESP32 Node
+      </button>
+      <button class="nav-item" data-page="notifikasi">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        Notifikasi
+        <span class="notif-badge-sidebar" id="notif-badge-sidebar" style="display:none">0</span>
+      </button>
+      <button class="nav-item" data-page="pengaturan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+        </svg>
+        Pengaturan
+      </button>
+    </nav>
+
+    <div class="sidebar-plant">
+      <div class="plant-photo-wrap">
+        <img class="plant-photo"
+          src="https://images.unsplash.com/photo-1727099079513-952d40de9d78?fm=jpg&q=75&w=400&auto=format&fit=crop"
+          alt="Hydroponic greenhouse" loading="lazy"
+          onerror="this.parentElement.classList.add('photo-fallback')" />
+        <div class="plant-photo-overlay"></div>
+        <div class="plant-photo-info">
+          <div class="plant-photo-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10">
+              <path d="M12 2a5 5 0 0 1 5 5c0 2.5-1.5 4.5-3.5 5.4V20a1.5 1.5 0 0 1-3 0v-7.6C8.5 11.5 7 9.5 7 7a5 5 0 0 1 5-5z"/>
+            </svg>
+            Kebun Aktif
+          </div>
+          <div class="plant-photo-name" id="sidebar-plant-name">Selada Keriting</div>
+          <div class="plant-photo-age" id="sidebar-plant-age">Memuat info…</div>
         </div>
       </div>
-      <div class="node-meta">
-        <span>Last seen: <strong id="last-seen-time">–</strong></span>
-      </div>
     </div>
 
-    <!-- Sensor Cards -->
-    <div class="sensor-grid">
-
-      <div class="sensor-card" id="card-ph">
-        <div class="sensor-label">pH Air</div>
-        <div class="sensor-value" id="val-ph">–</div>
-        <div class="sensor-sub">Normal: 5.5 – 7.0</div>
+    <div class="sidebar-user">
+      <div class="user-avatar" id="sidebar-avatar">H</div>
+      <div class="user-info">
+        <div class="name" id="sidebar-username">Memuat…</div>
+        <div class="role">Operator</div>
       </div>
-
-      <div class="sensor-card" id="card-tds">
-        <div class="sensor-label">TDS / Nutrisi</div>
-        <div class="sensor-value" id="val-tds">–</div>
-        <div class="sensor-sub">Normal: 400 – 1500 ppm</div>
-      </div>
-
-      <div class="sensor-card" id="card-temperature">
-        <div class="sensor-label">Suhu Air</div>
-        <div class="sensor-value" id="val-temperature">–</div>
-        <div class="sensor-sub">Sensor belum terpasang</div>
-      </div>
-
+      <button class="user-logout" id="logout-btn" title="Keluar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+      </button>
     </div>
+  </aside>
 
-    <!-- Connection Info -->
-    <div class="info-grid">
-      <div class="info-item">
-        <div class="label">Mode Koneksi</div>
-        <div class="value" id="val-mode">–</div>
-      </div>
-      <div class="info-item">
-        <div class="label">Node ID</div>
-        <div class="value">ESP1</div>
-      </div>
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-greeting">
+      <h1 id="topbar-title">Halo, <span id="topbar-greeting-name">…</span> 👋</h1>
+      <p id="topbar-subtitle">Pantau kondisi sistem hidroponikmu secara real-time.</p>
     </div>
+    <div class="topbar-meta">
+      <div class="weather-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 0 1 0 9z"/>
+        </svg>
+        <div class="winfo">
+          <span class="wtemp">Mataram</span>
+          <span class="wdesc">NTB, Indonesia</span>
+        </div>
+      </div>
+      <div class="time-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;color:var(--t3)">
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+        </svg>
+        <div style="display:flex;flex-direction:column;line-height:1.2;text-align:right">
+          <span class="time-val" id="clock-time">00:00:00</span>
+          <span style="font-size:11px;color:var(--t3)" id="clock-date">—</span>
+        </div>
+      </div>
+      <button class="notif-btn" data-page="notifikasi">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <span class="notif-dot"></span>
+      </button>
+    </div>
+  </header>
 
-    <!-- Sampling Panel -->
-    <div class="node-card" id="sampling-panel" style="margin-bottom:24px;">
-      <div class="node-header" style="margin-bottom:16px;">
-        <div class="node-name">📊 Rata-rata sampling</div>
+  <!-- Main Content -->
+  <main class="main-content">
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- PAGE: DASHBOARD                                        -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="page" id="page-dashboard">
+
+      <div class="conn-banner" id="conn-banner"></div>
+
+      <!-- Sensor Cards Row -->
+      <div class="sensor-row">
+        <div class="sensor-card ph">
+          <div class="sensor-header">
+            <div class="sensor-label ph">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><path d="M8 12h4m0 0V8m0 4v4"/>
+              </svg>
+              pH Level
+            </div>
+            <span class="sensor-badge badge-offline" id="ph-badge">N/A</span>
+          </div>
+          <div class="sensor-value" id="ph-value">—<span>pH</span></div>
+          <div class="sensor-ideal">Ideal: 5.5 – 6.5 pH</div>
+          <div class="sensor-sparkline"><canvas id="sparkPh" width="220" height="36"></canvas></div>
+        </div>
+        <div class="sensor-card tds">
+          <div class="sensor-header">
+            <div class="sensor-label tds">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
+              </svg>
+              TDS
+            </div>
+            <span class="sensor-badge badge-offline" id="tds-badge">N/A</span>
+          </div>
+          <div class="sensor-value" id="tds-value">—<span>ppm</span></div>
+          <div class="sensor-ideal">Ideal: 600 – 1200 ppm</div>
+          <div class="sensor-sparkline"><canvas id="sparkTds" width="220" height="36"></canvas></div>
+        </div>
       </div>
 
-      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
-        <label style="font-size:0.85rem; color:var(--text-muted); white-space:nowrap;">Durasi:</label>
-        <select id="sample-duration" style="background:var(--surface2); color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 10px; font-size:0.85rem; cursor:pointer;">
-          <option value="1">1 menit</option>
-          <option value="3">3 menit</option>
-          <option value="5" selected>5 menit</option>
-          <option value="10">10 menit</option>
-          <option value="30">30 menit</option>
-        </select>
-        <button id="btn-sample" style="background:transparent; color:var(--text); border:1px solid var(--border); border-radius:var(--radius-sm); padding:6px 18px; font-size:0.85rem; cursor:pointer; transition:all 0.2s;">
-          Mulai sampling
+      <!-- Raw ADC Data -->
+      <div class="raw-section">
+        <div class="card-title" style="margin-bottom:0">
+          Data Sensor Raw
+          <span style="font-size:11px;font-weight:400;color:var(--t3);font-family:'Plus Jakarta Sans',sans-serif">ADC &amp; Tegangan langsung dari ESP32</span>
+        </div>
+        <div class="raw-grid">
+          <div class="raw-item">
+            <div class="rlabel">pH ADC</div>
+            <div class="rval pulsing" id="raw-ph-adc">—<span class="runit"></span></div>
+          </div>
+          <div class="raw-item">
+            <div class="rlabel">pH Voltage</div>
+            <div class="rval pulsing" id="raw-ph-voltage">—<span class="runit"> V</span></div>
+          </div>
+          <div class="raw-item">
+            <div class="rlabel">TDS ADC</div>
+            <div class="rval pulsing" id="raw-tds-adc">—<span class="runit"></span></div>
+          </div>
+          <div class="raw-item">
+            <div class="rlabel">TDS Voltage</div>
+            <div class="rval pulsing" id="raw-tds-voltage">—<span class="runit"> V</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Grid -->
+      <div class="bottom-grid">
+        <div class="chart-card">
+          <div class="chart-header">
+            <span class="chart-title">Trend Monitoring (Sesi Ini)</span>
+          </div>
+          <div class="chart-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:#3A8F60"></div>pH</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#2E5DA8"></div>TDS (ppm)</div>
+          </div>
+          <div style="position:relative;height:200px">
+            <canvas id="trendChart"></canvas>
+          </div>
+        </div>
+
+        <div class="right-panel">
+          <div class="status-card">
+            <div class="card-title">
+              Status Sistem
+              <span class="sensor-badge badge-ok" id="sys-badge">Online</span>
+            </div>
+            <div id="conn-mode-display" class="status-mode mode-offline">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+              Menghubungkan…
+            </div>
+            <div class="status-rows">
+              <div class="status-row">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+                  ESP1 (Kebun)
+                </span>
+                <span class="val muted pulsing" id="row-esp1-status">…</span>
+              </div>
+              <div class="status-row">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+                  ESP2 (Rumah)
+                </span>
+                <span class="val muted pulsing" id="row-esp2-status">…</span>
+              </div>
+              <div class="status-row">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  Terakhir diterima
+                </span>
+                <span class="val muted" id="row-last-seen">—</span>
+              </div>
+              <div class="status-row">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10"/></svg>
+                  Mode koneksi
+                </span>
+                <span class="val muted" id="row-conn-mode">—</span>
+              </div>
+              <div class="status-row">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
+                  Target pH
+                </span>
+                <span class="val muted" id="row-target-ph">—</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pump-card">
+            <div class="card-title">
+              Kontrol Pompa
+              <span class="pump-mode-badge" id="pump-mode-badge">Auto</span>
+            </div>
+
+            <!-- Toggle Mode -->
+            <div class="pump-mode-row">
+              <span class="pump-mode-label">Mode Kontrol</span>
+              <div class="pump-mode-toggle">
+                <button class="mode-btn active" id="btn-mode-auto" onclick="setPumpMode('auto')">Otomatis</button>
+                <button class="mode-btn" id="btn-mode-manual" onclick="setPumpMode('manual')">Manual</button>
+              </div>
+            </div>
+
+            <!-- Status + Tombol Pompa -->
+            <div class="pump-list">
+              <div class="pump-item" id="pump-up">
+                <div class="pump-dot off"></div>
+                <span class="pump-name">Pompa pH Up</span>
+                <span class="pump-status off">—</span>
+                <button class="pump-ctrl-btn off" id="btn-pump-up" onclick="togglePump('up')" disabled>ON</button>
+              </div>
+              <div class="pump-item" id="pump-down">
+                <div class="pump-dot off"></div>
+                <span class="pump-name">Pompa pH Down</span>
+                <span class="pump-status off">—</span>
+                <button class="pump-ctrl-btn off" id="btn-pump-down" onclick="togglePump('down')" disabled>ON</button>
+              </div>
+            </div>
+
+            <div class="pump-ctrl-note" id="pump-ctrl-note">
+              Aktifkan mode <strong>Manual</strong> untuk mengontrol pompa dari sini.
+            </div>
+          </div>
+
+          <div class="lora-card">
+            <div class="card-title">Sinyal LoRa</div>
+            <div id="lora-section"><div class="lora-inactive">Menunggu data…</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Notifications preview in dashboard -->
+      <div class="notif-card">
+        <div class="card-title">
+          Notifikasi Terakhir
+          <span style="font-size:11px;font-weight:400;color:var(--t3);font-family:'Plus Jakarta Sans',sans-serif">Auto-generated dari perubahan status</span>
+        </div>
+        <div class="notif-list" id="notif-list-dashboard">
+          <div style="font-size:12px;color:var(--t3);padding:8px 0">Menghubungkan…</div>
+        </div>
+      </div>
+
+    </div><!-- /page-dashboard -->
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- PAGE: MONITORING                                       -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="page hidden" id="page-monitoring">
+
+      <div class="page-header-row">
+        <div>
+          <h2 class="page-title">Monitoring Real-time</h2>
+          <p class="page-desc">Grafik detail &amp; tabel data live dari ESP32</p>
+        </div>
+        <div class="header-badges">
+          <span class="sensor-badge badge-ok" id="mon-ph-badge-top">pH: —</span>
+          <span class="sensor-badge badge-ok" id="mon-tds-badge-top">TDS: —</span>
+        </div>
+      </div>
+
+      <!-- Big stat cards -->
+      <div class="mon-stat-row">
+        <div class="mon-stat-card ph-card">
+          <div class="mon-stat-label">pH Level</div>
+          <div class="mon-stat-value" id="mon-ph-val">—</div>
+          <div class="mon-stat-sub" id="mon-ph-status">Memuat…</div>
+          <div class="mon-stat-range">Range ideal: 5.5 – 6.5 pH</div>
+        </div>
+        <div class="mon-stat-card tds-card">
+          <div class="mon-stat-label">TDS / EC</div>
+          <div class="mon-stat-value" id="mon-tds-val">—</div>
+          <div class="mon-stat-sub" id="mon-tds-status">Memuat…</div>
+          <div class="mon-stat-range">Range ideal: 600 – 1200 ppm</div>
+        </div>
+        <div class="mon-stat-card volt-card">
+          <div class="mon-stat-label">pH Voltage</div>
+          <div class="mon-stat-value" id="mon-ph-volt">— <span style="font-size:16px;color:var(--t3)">V</span></div>
+          <div class="mon-stat-sub">ADC: <span id="mon-ph-adc">—</span></div>
+          <div class="mon-stat-range">Raw sensor ESP32</div>
+        </div>
+        <div class="mon-stat-card volt-card">
+          <div class="mon-stat-label">TDS Voltage</div>
+          <div class="mon-stat-value" id="mon-tds-volt">— <span style="font-size:16px;color:var(--t3)">V</span></div>
+          <div class="mon-stat-sub">ADC: <span id="mon-tds-adc">—</span></div>
+          <div class="mon-stat-range">Raw sensor ESP32</div>
+        </div>
+      </div>
+
+      <!-- pH Detail Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <span class="chart-title">Grafik pH — Sesi Ini</span>
+          <span class="chart-badge ph-badge-inline">pH</span>
+        </div>
+        <div style="position:relative;height:220px">
+          <canvas id="monPhChart"></canvas>
+        </div>
+      </div>
+
+      <!-- TDS Detail Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <span class="chart-title">Grafik TDS — Sesi Ini</span>
+          <span class="chart-badge tds-badge-inline">ppm</span>
+        </div>
+        <div style="position:relative;height:220px">
+          <canvas id="monTdsChart"></canvas>
+        </div>
+      </div>
+
+      <!-- Live Data Table -->
+      <div class="table-card">
+        <div class="card-title">
+          Tabel Data Real-time
+          <span style="font-size:11px;font-weight:400;color:var(--t3)">Max 50 baris terakhir</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Waktu</th>
+                <th>pH</th>
+                <th>pH ADC</th>
+                <th>pH Volt (V)</th>
+                <th>TDS (ppm)</th>
+                <th>TDS ADC</th>
+                <th>TDS Volt (V)</th>
+                <th>Status pH</th>
+                <th>Status TDS</th>
+              </tr>
+            </thead>
+            <tbody id="mon-table-body">
+              <tr><td colspan="9" class="table-empty">Menunggu data…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /page-monitoring -->
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- PAGE: RIWAYAT                                          -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="page hidden" id="page-riwayat">
+
+      <div class="page-header-row">
+        <div>
+          <h2 class="page-title">Riwayat Data</h2>
+          <p class="page-desc">Data histori pH &amp; TDS yang tersimpan di Firebase</p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select class="filter-select" id="riwayat-filter">
+            <option value="50">50 data terakhir</option>
+            <option value="100">100 data terakhir</option>
+            <option value="200">200 data terakhir</option>
+          </select>
+          <button class="btn-outline" id="riwayat-refresh-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+            </svg>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <!-- Summary stats -->
+      <div class="riwayat-summary">
+        <div class="rsum-card">
+          <div class="rsum-label">Rata-rata pH</div>
+          <div class="rsum-val" id="rsum-ph-avg">—</div>
+        </div>
+        <div class="rsum-card">
+          <div class="rsum-label">pH Min / Max</div>
+          <div class="rsum-val" id="rsum-ph-minmax">— / —</div>
+        </div>
+        <div class="rsum-card">
+          <div class="rsum-label">Rata-rata TDS</div>
+          <div class="rsum-val" id="rsum-tds-avg">— <span style="font-size:12px;color:var(--t3)">ppm</span></div>
+        </div>
+        <div class="rsum-card">
+          <div class="rsum-label">TDS Min / Max</div>
+          <div class="rsum-val" id="rsum-tds-minmax">— / —</div>
+        </div>
+        <div class="rsum-card">
+          <div class="rsum-label">Total Data</div>
+          <div class="rsum-val" id="rsum-total">—</div>
+        </div>
+      </div>
+
+      <!-- History Chart -->
+      <div class="chart-card">
+        <div class="chart-header">
+          <span class="chart-title">Grafik Riwayat</span>
+        </div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:#3A8F60"></div>pH</div>
+          <div class="legend-item"><div class="legend-dot" style="background:#2E5DA8"></div>TDS (ppm)</div>
+        </div>
+        <div style="position:relative;height:240px">
+          <canvas id="riwayatChart"></canvas>
+        </div>
+      </div>
+
+      <!-- History Table -->
+      <div class="table-card">
+        <div class="card-title">
+          Data Tersimpan
+          <span style="font-size:11px;font-weight:400;color:var(--t3)">Dari Firebase /dashboard/history</span>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Tanggal</th>
+                <th>Waktu</th>
+                <th>pH</th>
+                <th>TDS (ppm)</th>
+                <th>pH ADC</th>
+                <th>TDS ADC</th>
+                <th>Mode</th>
+                <th>Status pH</th>
+              </tr>
+            </thead>
+            <tbody id="riwayat-table-body">
+              <tr><td colspan="8" class="table-empty">Memuat data…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /page-riwayat -->
+
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- PAGE: NOTIFIKASI                                       -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="page hidden" id="page-notifikasi">
+
+      <div class="page-header-row">
+        <div>
+          <h2 class="page-title">Notifikasi</h2>
+          <p class="page-desc">Log semua event &amp; perubahan status sistem</p>
+        </div>
+        <button class="btn-outline btn-danger-outline" id="notif-clear-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+            <path d="M10 11v6M14 11v6M9 6V4h6v2"/>
+          </svg>
+          Hapus Semua
         </button>
       </div>
 
-      <div id="sample-status" style="font-size:0.82rem; color:var(--text-muted); margin-bottom:8px;">
-        Belum ada sesi sampling.
+      <!-- Filter tabs -->
+      <div class="notif-filter-row">
+        <button class="notif-filter-btn active" data-filter="all">Semua</button>
+        <button class="notif-filter-btn" data-filter="ok">Normal</button>
+        <button class="notif-filter-btn" data-filter="warn">Peringatan</button>
+        <button class="notif-filter-btn" data-filter="info">Info</button>
       </div>
-      <div id="sample-result" style="font-size:1rem; color:var(--text); font-weight:500;">
+
+      <div class="notif-full-list" id="notif-full-list">
+        <div style="font-size:13px;color:var(--t3);text-align:center;padding:40px 0">Belum ada notifikasi.</div>
       </div>
-    </div>
 
-    <div class="footer">
-      Sistem Hidroponik IoT • Data diperbarui setiap ~5 detik via Firebase Realtime Database
-    </div>
+    </div><!-- /page-notifikasi -->
 
-  </div>
+    <!-- ══════════════════════════════════════════════════════ -->
+    <!-- PAGE: PENGATURAN                                       -->
+    <!-- ══════════════════════════════════════════════════════ -->
+    <div class="page hidden" id="page-pengaturan">
+
+      <div class="page-header-row">
+        <div>
+          <h2 class="page-title">Pengaturan</h2>
+          <p class="page-desc">Konfigurasi sistem &amp; preferensi dashboard</p>
+        </div>
+      </div>
+
+      <div class="settings-grid">
+
+        <!-- Info Tanaman -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <div class="settings-icon green">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a5 5 0 0 1 5 5c0 2.5-1.5 4.5-3.5 5.4V20a1.5 1.5 0 0 1-3 0v-7.6C8.5 11.5 7 9.5 7 7a5 5 0 0 1 5-5z"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-card-title">Info Tanaman</div>
+              <div class="settings-card-desc">Nama &amp; informasi tanaman yang sedang ditanam</div>
+            </div>
+          </div>
+          <div class="settings-form">
+            <div class="form-group">
+              <label class="form-label">Nama Tanaman</label>
+              <input type="text" class="form-input" id="set-plant-name" placeholder="cth: Selada Keriting" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Tanggal Tanam</label>
+              <input type="date" class="form-input" id="set-plant-date" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Target Panen (hari)</label>
+              <input type="number" class="form-input" id="set-plant-days" placeholder="cth: 45" min="1" max="365" />
+            </div>
+            <button class="btn-primary" id="set-plant-save">Simpan Info Tanaman</button>
+            <div class="settings-save-status" id="set-plant-status"></div>
+          </div>
+        </div>
+
+        <!-- Target pH (read-only dari Firebase) -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <div class="settings-icon blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><path d="M8 12h4m0 0V8m0 4v4"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-card-title">Target pH Sistem</div>
+              <div class="settings-card-desc">Dibaca dari ESP32 via Firebase (read-only)</div>
+            </div>
+          </div>
+          <div class="settings-info-box">
+            <div class="info-row">
+              <span class="info-label">Target pH saat ini</span>
+              <span class="info-val" id="set-target-ph-display">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Pompa pH Up</span>
+              <span class="info-val" id="set-pump-up-display">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Pompa pH Down</span>
+              <span class="info-val" id="set-pump-down-display">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Mode Koneksi</span>
+              <span class="info-val" id="set-conn-mode-display">—</span>
+            </div>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Mode Kontrol</span>
+            <span class="info-val" id="set-ctrl-mode-display">—</span>
+          </div>
+          <div class="settings-note">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            Mode Manual: pompa dikontrol dari website. Mode Otomatis: ESP32 mengatur sendiri berdasarkan pH.
+          </div>
+        </div>
+
+        <!-- Alert Threshold -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <div class="settings-icon warn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-card-title">Batas Alert</div>
+              <div class="settings-card-desc">Threshold untuk memicu notifikasi peringatan</div>
+            </div>
+          </div>
+          <div class="settings-form">
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">pH Min</label>
+                <input type="number" class="form-input" id="set-ph-min" step="0.1" min="0" max="14" placeholder="5.5" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">pH Max</label>
+                <input type="number" class="form-input" id="set-ph-max" step="0.1" min="0" max="14" placeholder="6.5" />
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">TDS Min (ppm)</label>
+                <input type="number" class="form-input" id="set-tds-min" step="10" min="0" placeholder="600" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">TDS Max (ppm)</label>
+                <input type="number" class="form-input" id="set-tds-max" step="10" min="0" placeholder="1200" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Interval Simpan Riwayat</label>
+              <select class="form-input form-select" id="set-history-interval">
+                <option value="5">Setiap 5 menit</option>
+                <option value="10" selected>Setiap 10 menit</option>
+                <option value="15">Setiap 15 menit</option>
+                <option value="30">Setiap 30 menit</option>
+              </select>
+            </div>
+            <button class="btn-primary" id="set-alert-save">Simpan Pengaturan</button>
+            <div class="settings-save-status" id="set-alert-status"></div>
+          </div>
+        </div>
+
+        <!-- Tentang Sistem -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <div class="settings-icon neutral">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-card-title">Tentang Sistem</div>
+              <div class="settings-card-desc">Informasi koneksi &amp; versi</div>
+            </div>
+          </div>
+          <div class="settings-info-box">
+            <div class="info-row">
+              <span class="info-label">Firebase Project</span>
+              <span class="info-val monospace">hidroponikcontroller</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Database Region</span>
+              <span class="info-val">asia-southeast1</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">User Login</span>
+              <span class="info-val" id="set-user-display">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Versi Dashboard</span>
+              <span class="info-val">v2.0.0</span>
+            </div>
+          </div>
+          <button class="btn-outline btn-danger-outline" id="settings-logout-btn" style="margin-top:12px;width:100%">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            Logout
+          </button>
+        </div>
+
+      </div><!-- /settings-grid -->
+    </div><!-- /page-pengaturan -->
+
+  </main>
+</div>
+
+<script type="module" src="app.js"></script>
 </body>
 </html>
