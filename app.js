@@ -749,11 +749,12 @@ function syncSettingsDisplay() {
   if ($('set-plant-date'))  $('set-plant-date').value  = settings.plantDate || '';
   if ($('set-plant-days'))  $('set-plant-days').value  = settings.plantDays || 45;
 
-  // Alert thresholds
-  if ($('set-ph-min'))      $('set-ph-min').value      = settings.phMin;
-  if ($('set-ph-max'))      $('set-ph-max').value      = settings.phMax;
-  if ($('set-tds-min'))     $('set-tds-min').value     = settings.tdsMin;
-  if ($('set-tds-max'))     $('set-tds-max').value     = settings.tdsMax;
+  // Alert thresholds — ambil dari Firebase (pump config) kalau ada, fallback localStorage
+  const pumpCfg = lastEsp1?.pump || {};
+  if ($('set-ph-min'))  $('set-ph-min').value  = pumpCfg.ph_min  != null ? pumpCfg.ph_min  : settings.phMin;
+  if ($('set-ph-max'))  $('set-ph-max').value  = pumpCfg.ph_max  != null ? pumpCfg.ph_max  : settings.phMax;
+  if ($('set-tds-min')) $('set-tds-min').value = pumpCfg.tds_min != null ? pumpCfg.tds_min : settings.tdsMin;
+  if ($('set-tds-max')) $('set-tds-max').value = pumpCfg.tds_max != null ? pumpCfg.tds_max : settings.tdsMax;
   if ($('set-history-interval')) $('set-history-interval').value = settings.historyInterval;
 
   // Firebase read-only values
@@ -1600,13 +1601,13 @@ document.addEventListener('DOMContentLoaded', () => {
     showSaveStatus('set-plant-status', 'Tersimpan!');
   });
 
-  // Pengaturan: save alert thresholds
+  // Pengaturan: save alert thresholds → tulis ke Firebase /hydroponic/esp1/pump
   const saveAlert = $('set-alert-save');
-  if (saveAlert) saveAlert.addEventListener('click', () => {
+  if (saveAlert) saveAlert.addEventListener('click', async () => {
     const phMin  = parseFloat($('set-ph-min')?.value);
     const phMax  = parseFloat($('set-ph-max')?.value);
-    const tdsMin = parseInt($('set-tds-min')?.value);
-    const tdsMax = parseInt($('set-tds-max')?.value);
+    const tdsMin = parseFloat($('set-tds-min')?.value);
+    const tdsMax = parseFloat($('set-tds-max')?.value);
     const intv   = parseInt($('set-history-interval')?.value);
 
     if (isNaN(phMin) || isNaN(phMax) || phMin >= phMax) {
@@ -1616,12 +1617,26 @@ document.addEventListener('DOMContentLoaded', () => {
       showSaveStatus('set-alert-status', 'TDS min harus lebih kecil dari max!', true); return;
     }
 
+    // Simpan ke localStorage (untuk dashboard alert display)
     settings.phMin  = phMin;  settings.phMax  = phMax;
     settings.tdsMin = tdsMin; settings.tdsMax = tdsMax;
     settings.historyInterval = intv || 10;
     saveSettings();
-    pushNotif('Pengaturan diperbarui', `Alert: pH ${phMin}–${phMax}, TDS ${tdsMin}–${tdsMax} ppm`, 'info');
-    showSaveStatus('set-alert-status', 'Pengaturan disimpan!');
+
+    // Tulis ke Firebase → ESP32 akan terima via pumpConfigStream
+    try {
+      await update(ref(db, 'hydroponic/esp1/pump'), {
+        ph_min:  phMin,
+        ph_max:  phMax,
+        tds_min: tdsMin,
+        tds_max: tdsMax,
+      });
+      pushNotif('Pengaturan diperbarui', `TDS ${tdsMin}–${tdsMax} ppm | pH ${phMin}–${phMax}`, 'info');
+      showSaveStatus('set-alert-status', '✓ Tersimpan! ESP32 akan update otomatis.');
+    } catch(e) {
+      showSaveStatus('set-alert-status', 'Gagal simpan ke Firebase: ' + e.message, true);
+      console.error('[Pump Config] Gagal save:', e);
+    }
   });
 
   // ── Mobile Sidebar Toggle ─────────────────────────────
