@@ -765,6 +765,80 @@
           </div>
         </div>
 
+        <!-- WiFi Fallback Config -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <div class="settings-icon neutral">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-card-title">WiFi Cadangan ESP32</div>
+              <div class="settings-card-desc">Jika WiFi utama (hardcoded) gagal, ESP32 akan mencoba urutan ini</div>
+            </div>
+          </div>
+
+          <!-- Urutan prioritas info -->
+          <div class="wifi-priority-info">
+            <div class="wifi-priority-item wifi-priority-hardcoded">
+              <span class="wifi-priority-num">1</span>
+              <span class="wifi-priority-label">Hardcoded — <code>river</code></span>
+              <span class="wifi-priority-badge">config.h</span>
+            </div>
+            <div class="wifi-priority-item">
+              <span class="wifi-priority-num">2</span>
+              <span class="wifi-priority-label">WiFi Cadangan 1 (Firebase)</span>
+              <span class="wifi-priority-badge wifi-badge-firebase">Firebase</span>
+            </div>
+            <div class="wifi-priority-item">
+              <span class="wifi-priority-num">3</span>
+              <span class="wifi-priority-label">WiFi Cadangan 2 (Firebase)</span>
+              <span class="wifi-priority-badge wifi-badge-firebase">Firebase</span>
+            </div>
+          </div>
+
+          <!-- WiFi 1 -->
+          <div class="wifi-config-group">
+            <div class="wifi-config-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>
+              WiFi Cadangan 1
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">SSID</label>
+                <input type="text" class="form-input" id="wifi1-ssid" placeholder="Nama jaringan WiFi" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="text" class="form-input" id="wifi1-pass" placeholder="Password WiFi" autocomplete="off" />
+              </div>
+            </div>
+          </div>
+
+          <!-- WiFi 2 -->
+          <div class="wifi-config-group">
+            <div class="wifi-config-label">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg>
+              WiFi Cadangan 2
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">SSID</label>
+                <input type="text" class="form-input" id="wifi2-ssid" placeholder="Nama jaringan WiFi" autocomplete="off" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Password</label>
+                <input type="text" class="form-input" id="wifi2-pass" placeholder="Password WiFi" autocomplete="off" />
+              </div>
+            </div>
+          </div>
+
+          <button class="btn-primary" id="set-wifi-save">Simpan ke Firebase</button>
+          <div class="settings-save-status" id="set-wifi-status"></div>
+        </div>
+
         <!-- Tentang Sistem -->
         <div class="settings-card">
           <div class="settings-card-header">
