@@ -1600,3 +1600,261 @@ a { text-decoration: none; color: inherit; }
 .btn-default-esp32:hover {
   background: rgba(214,141,52,0.08);
 }
+/* ══════════════════════════════════════════════════════════
+   RESPONSIVE — Mobile & Tablet
+   Sidebar slide-over, hamburger toggle, layout stack
+   PC (≥769px) tidak terpengaruh sama sekali
+   ══════════════════════════════════════════════════════════ */
+
+/* ── Hamburger button — hanya muncul di mobile ─────────── */
+.hamburger-btn {
+  display: none; /* disembunyikan di PC */
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: var(--s2);
+  border-radius: 6px;
+  color: var(--t1);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+  margin-right: 4px;
+}
+.hamburger-btn:hover { background: var(--s3); }
+.hamburger-btn svg { width: 20px; height: 20px; display: block; }
+
+/* ── Sidebar overlay backdrop ─────────────────────────── */
+.sidebar-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.38);
+  z-index: 199;
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.sidebar-backdrop.visible {
+  display: block;
+  opacity: 1;
+}
+
+/* ── Close button di dalam sidebar (mobile only) ──────── */
+.sidebar-close-btn {
+  display: none; /* hanya di mobile */
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--s2);
+  border-radius: 6px;
+  color: var(--t2);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: background 0.15s;
+}
+.sidebar-close-btn:hover { background: var(--s3); }
+.sidebar-close-btn svg { width: 16px; height: 16px; display: block; }
+
+/* ══════════════════════════════════════════════════════════
+   BREAKPOINT TABLET — ≤ 900px
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  /* Sembunyikan beberapa elemen topbar yang tidak muat */
+  .weather-chip { display: none; }
+  .topbar { padding: 0 16px; gap: 10px; }
+  .main-content { padding: 18px 16px; }
+
+  /* Bottom grid jadi 1 kolom */
+  .bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Mon stat row: 2 kolom */
+  .mon-stat-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Settings grid */
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Riwayat summary: 2 kolom */
+  .riwayat-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   BREAKPOINT MOBILE — ≤ 768px
+   Sidebar jadi slide-over drawer
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── Layout: hapus kolom sidebar, full width ─────────── */
+  .app-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--topbar-h) 1fr;
+  }
+
+  /* ── Sidebar: fixed drawer dari kiri ─────────────────── */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 260px;
+    z-index: 200;
+    transform: translateX(-100%);
+    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: none;
+    /* grid-row tidak berlaku di fixed */
+    grid-row: unset;
+  }
+
+  /* State: sidebar terbuka */
+  .sidebar.open {
+    transform: translateX(0);
+    box-shadow: 4px 0 32px rgba(0,0,0,0.18);
+  }
+
+  /* ── Tampilkan close button di header sidebar ─────────── */
+  .sidebar-close-btn { display: flex; }
+
+  /* ── Topbar: full width, tambahkan hamburger ─────────── */
+  .topbar {
+    grid-column: 1;
+    padding: 0 14px;
+    gap: 8px;
+  }
+
+  /* ── Tampilkan hamburger ─────────────────────────────── */
+  .hamburger-btn { display: flex; }
+
+  /* ── Main content: full width ────────────────────────── */
+  .main-content {
+    grid-column: 1;
+    padding: 16px 14px;
+    /* Hilangkan offset background ke sidebar */
+  }
+
+  /* Background pseudo-element: mulai dari kiri */
+  .main-content::before {
+    left: 0;
+  }
+
+  /* ── Topbar greeting: lebih compact ──────────────────── */
+  .topbar-greeting h1 { font-size: 15px; }
+  .topbar-greeting p  { display: none; }
+
+  /* ── Sembunyikan time chip, hanya notif & clock kecil ── */
+  .time-chip { display: none; }
+
+  /* ── Sensor row: 1 kolom ─────────────────────────────── */
+  .sensor-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .sensor-value { font-size: 30px; }
+
+  /* ── Bottom grid: 1 kolom ────────────────────────────── */
+  .bottom-grid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  /* ── Raw grid: 2 kolom ───────────────────────────────── */
+  .raw-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ── Mon stat row: 2 kolom ───────────────────────────── */
+  .mon-stat-row {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  .mon-stat-value { font-size: 28px; }
+
+  /* ── Riwayat summary: 2 kolom ────────────────────────── */
+  .riwayat-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ── Page header row: wrap ───────────────────────────── */
+  .page-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .page-header-row > div:last-child {
+    width: 100%;
+  }
+
+  /* Filter row di riwayat: full width wrap */
+  .page-header-row > div[style*="display:flex"] {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  #riwayat-filter, #riwayat-refresh-btn, #delete-range-toggle-btn {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  /* ── Table: horizontal scroll ────────────────────────── */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table {
+    min-width: 560px;
+  }
+
+  /* ── Settings grid: 1 kolom ──────────────────────────── */
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* ── Calibration points: 1 kolom ─────────────────────── */
+  .calib-points-wrap {
+    grid-template-columns: 1fr;
+  }
+
+  /* ── Delete range fields: stack ──────────────────────── */
+  .delete-range-fields {
+    flex-direction: column;
+    gap: 10px;
+  }
+  .delete-field .form-input { width: 100%; }
+  .delete-range-sep { display: none; }
+
+  /* ── Modal: full width ───────────────────────────────── */
+  .modal-box { width: calc(100vw - 28px); }
+
+  /* ── Notif filter row: scroll horizontal ─────────────── */
+  .notif-filter-row {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   BREAKPOINT SMALL PHONE — ≤ 400px
+   ══════════════════════════════════════════════════════════ */
+@media (max-width: 400px) {
+  .mon-stat-row {
+    grid-template-columns: 1fr;
+  }
+  .riwayat-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .main-content { padding: 12px 10px; }
+  .sensor-value { font-size: 26px; }
+}

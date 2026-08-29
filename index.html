@@ -24,6 +24,9 @@
   </div>
 </div>
 
+<!-- ── Sidebar Backdrop (mobile only) ───────────────────────── -->
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
 <!-- ── App Shell ────────────────────────────────────────────── -->
 <div class="app-shell">
 
@@ -39,6 +42,13 @@
         <span>Hydroponic</span>
         <span>Monitor</span>
       </div>
+      <!-- Close button — hanya terlihat di mobile -->
+      <button class="sidebar-close-btn" id="sidebar-close-btn" aria-label="Tutup menu">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="18" y1="6" x2="6" y2="18"/>
+          <line x1="6"  y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
     </div>
 
     <nav class="sidebar-nav">
@@ -123,6 +133,14 @@
 
   <!-- Topbar -->
   <header class="topbar">
+    <!-- Hamburger: hanya muncul di mobile -->
+    <button class="hamburger-btn" id="hamburger-btn" aria-label="Buka menu" aria-expanded="false">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="3" y1="6"  x2="21" y2="6"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <line x1="3" y1="18" x2="21" y2="18"/>
+      </svg>
+    </button>
     <div class="topbar-greeting">
       <h1 id="topbar-title">Halo, <span id="topbar-greeting-name">…</span> 👋</h1>
       <p id="topbar-subtitle">Pantau kondisi sistem hidroponikmu secara real-time.</p>

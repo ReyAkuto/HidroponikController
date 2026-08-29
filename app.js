@@ -1569,6 +1569,41 @@ document.addEventListener('DOMContentLoaded', () => {
     showSaveStatus('set-alert-status', 'Pengaturan disimpan!');
   });
 
+  // ── Mobile Sidebar Toggle ─────────────────────────────
+  const sidebar      = document.querySelector('.sidebar');
+  const backdrop     = $('sidebar-backdrop');
+  const hambBtn      = $('hamburger-btn');
+  const closeBtn     = $('sidebar-close-btn');
+
+  function openSidebar() {
+    sidebar?.classList.add('open');
+    backdrop?.classList.add('visible');
+    hambBtn?.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden'; // cegah scroll body saat drawer terbuka
+  }
+  function closeSidebar() {
+    sidebar?.classList.remove('open');
+    backdrop?.classList.remove('visible');
+    hambBtn?.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  hambBtn?.addEventListener('click', openSidebar);
+  closeBtn?.addEventListener('click', closeSidebar);
+  backdrop?.addEventListener('click', closeSidebar);
+
+  // Auto-close sidebar saat nav item diklik (mobile UX)
+  document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (window.innerWidth <= 768) closeSidebar();
+    });
+  });
+
+  // Tutup sidebar kalau di-resize ke desktop
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) closeSidebar();
+  });
+
   // DOM siap — trigger auth jika sudah login sebelumnya
   // Enter key di rename modal
   const renameInput = $('rename-input');
