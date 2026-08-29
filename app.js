@@ -103,6 +103,7 @@ function navigate(page) {
     syncSettingsDisplay();
     renderCalibUI();
     updateCalibFormulaBadge();
+    loadWifiConfig();
   }
 
   // Init monitoring charts if needed
@@ -954,10 +955,6 @@ function updateDashboard(esp1, esp2, system) {
   renderPump('pump-nutrisi', 'Pompa Nutrisi (AB Mix)', pump.nutrisi_active || false, mode);
   renderPump('pump-water',   'Pompa Air Murni',        pump.water_active   || false, mode);
 
-  // Re-sync tombol mode & state pompa setelah render ulang
-  // (renderPump recreate innerHTML → tombol harus di-update lagi)
-  updatePumpControlUI();
-
   // LoRa
   const relay = esp2?.relay || {};
   const loraSection = $('lora-section');
@@ -1490,6 +1487,49 @@ function showCalibStatus(msg, isError = false) {
   el.className = 'calib-save-status ' + (isError ? 'error' : msg ? 'ok' : '');
 }
 
+// ── WiFi Fallback Config ──────────────────────────────────
+const WIFI_CONFIG_PATH = 'config/wifi';
+
+async function loadWifiConfig() {
+  try {
+    const snap = await get(ref(db, WIFI_CONFIG_PATH));
+    if (!snap.exists()) return;
+    const d = snap.val();
+    if ($('wifi1-ssid')) $('wifi1-ssid').value = d.ssid1 || '';
+    if ($('wifi1-pass')) $('wifi1-pass').value = d.pass1 || '';
+    if ($('wifi2-ssid')) $('wifi2-ssid').value = d.ssid2 || '';
+    if ($('wifi2-pass')) $('wifi2-pass').value = d.pass2 || '';
+  } catch(e) {
+    console.error('[WiFi Config] Gagal load:', e.message);
+  }
+}
+
+async function saveWifiConfig() {
+  const ssid1 = $('wifi1-ssid')?.value.trim() || '';
+  const pass1 = $('wifi1-pass')?.value.trim() || '';
+  const ssid2 = $('wifi2-ssid')?.value.trim() || '';
+  const pass2 = $('wifi2-pass')?.value.trim() || '';
+
+  if (!ssid1 && !ssid2) {
+    showSaveStatus('set-wifi-status', 'Isi minimal satu SSID!', true); return;
+  }
+  if (ssid1 && !pass1) {
+    showSaveStatus('set-wifi-status', 'Password WiFi Cadangan 1 tidak boleh kosong!', true); return;
+  }
+  if (ssid2 && !pass2) {
+    showSaveStatus('set-wifi-status', 'Password WiFi Cadangan 2 tidak boleh kosong!', true); return;
+  }
+
+  try {
+    await set(ref(db, WIFI_CONFIG_PATH), { ssid1, pass1, ssid2, pass2 });
+    showSaveStatus('set-wifi-status', '✓ Tersimpan! ESP32 akan pakai saat next boot.');
+    pushNotif('WiFi Cadangan Diperbarui', `Prioritas: ${ssid1 || '—'} → ${ssid2 || '—'}`, 'info');
+  } catch(e) {
+    showSaveStatus('set-wifi-status', 'Gagal simpan: ' + e.message, true);
+    console.error('[WiFi Config] Gagal save:', e.message);
+  }
+}
+
 // ── DOM ready event wiring ────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
 
@@ -1544,6 +1584,10 @@ document.addEventListener('DOMContentLoaded', () => {
     renderFullNotifList();
     renderDashboardNotifs();
   });
+
+  // Pengaturan: save WiFi cadangan
+  const saveWifi = $('set-wifi-save');
+  if (saveWifi) saveWifi.addEventListener('click', saveWifiConfig);
 
   // Pengaturan: save plant info
   const savePlant = $('set-plant-save');
