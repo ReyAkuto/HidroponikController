@@ -108,9 +108,9 @@
 
     <div class="sidebar-user">
       <div class="user-avatar" id="sidebar-avatar">H</div>
-      <div class="user-info">
+      <div class="user-info" onclick="openRenameModal()" title="Klik untuk ganti nama" style="cursor:pointer">
         <div class="name" id="sidebar-username">Memuat…</div>
-        <div class="role">Operator</div>
+        <div class="role">Operator · <span style="color:var(--accent);font-size:10px">edit</span></div>
       </div>
       <button class="user-logout" id="logout-btn" title="Keluar">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -452,7 +452,7 @@
           <h2 class="page-title">Riwayat Data</h2>
           <p class="page-desc">Data histori pH &amp; TDS yang tersimpan di Firebase</p>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select class="filter-select" id="riwayat-filter">
             <option value="50">50 data terakhir</option>
             <option value="100">100 data terakhir</option>
@@ -464,6 +464,43 @@
             </svg>
             Refresh
           </button>
+          <button class="btn-outline btn-danger-outline" id="delete-range-toggle-btn" onclick="document.getElementById('delete-range-panel').classList.toggle('show')">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+            </svg>
+            Hapus Data
+          </button>
+        </div>
+      </div>
+
+      <!-- Delete range panel -->
+      <div class="delete-range-panel" id="delete-range-panel">
+        <div class="delete-range-inner">
+          <div class="delete-range-title">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="15" height="15">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+            Hapus Riwayat Berdasarkan Rentang Tanggal
+          </div>
+          <div class="delete-range-fields">
+            <div class="delete-field">
+              <label>Dari Tanggal</label>
+              <input type="date" id="delete-from" class="form-input" />
+            </div>
+            <div class="delete-range-sep">→</div>
+            <div class="delete-field">
+              <label>Sampai Tanggal</label>
+              <input type="date" id="delete-to" class="form-input" />
+            </div>
+            <button class="btn-danger-outline btn-outline" id="delete-range-btn">Cari &amp; Hapus</button>
+          </div>
+          <div class="delete-confirm-row" id="delete-confirm-row">
+            <span>Akan menghapus <strong id="delete-count-preview">0</strong> data. Yakin?</span>
+            <button class="btn-danger" id="delete-confirm-btn">Ya, Hapus</button>
+            <button class="btn-outline" id="delete-cancel-btn">Batal</button>
+          </div>
+          <div class="delete-status" id="delete-status"></div>
         </div>
       </div>
 
@@ -744,10 +781,201 @@
           </button>
         </div>
 
+        <!-- Kalibrasi pH -->
+        <div class="settings-card calib-card" style="grid-column: 1 / -1;">
+          <div class="settings-card-header">
+            <div class="settings-icon blue">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2v-4M9 21H5a2 2 0 0 1-2-2v-4m0 0h18"/>
+              </svg>
+            </div>
+            <div>
+              <div class="settings-card-title">Kalibrasi Sensor pH</div>
+              <div class="settings-card-desc">Minimal 2 titik kalibrasi (bisa 3 titik untuk akurasi lebih tinggi) — gunakan larutan buffer standar</div>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:8px;">
+              <span class="calib-formula-badge" id="calib-formula-badge">Belum dikalibrasi</span>
+            </div>
+          </div>
+
+          <!-- Titik Kalibrasi -->
+          <div class="calib-points-wrap" id="calib-points-wrap">
+
+            <!-- Titik 1 -->
+            <div class="calib-point-card" id="calib-pt-1">
+              <div class="calib-pt-header">
+                <div class="calib-pt-num">Titik 1</div>
+                <span class="calib-pt-status" id="calib-pt-1-status">Belum diambil</span>
+              </div>
+              <div class="calib-pt-body">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Nilai pH Buffer</label>
+                  <input type="number" class="form-input" id="calib-ph-1" step="0.01" min="0" max="14" placeholder="cth: 4.00" />
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Durasi Sampling</label>
+                  <select class="form-input form-select" id="calib-dur-1">
+                    <option value="60">1 menit</option>
+                    <option value="120" selected>2 menit</option>
+                    <option value="180">3 menit</option>
+                    <option value="240">4 menit</option>
+                    <option value="300">5 menit</option>
+                  </select>
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Rata-rata ADC</label>
+                  <div class="calib-adc-display" id="calib-adc-1">—</div>
+                </div>
+                <div style="display:flex;align-items:flex-end;padding-bottom:2px;">
+                  <button class="btn-calib-sample" id="calib-btn-1" onclick="startCalibSampling(1)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 8 12 12 14 14"/></svg>
+                    Mulai Sampling
+                  </button>
+                </div>
+              </div>
+              <div class="calib-progress-wrap hidden" id="calib-prog-1">
+                <div class="calib-progress-bar" id="calib-prog-bar-1"></div>
+                <div class="calib-progress-label" id="calib-prog-label-1">Sampling…</div>
+              </div>
+            </div>
+
+            <!-- Titik 2 -->
+            <div class="calib-point-card" id="calib-pt-2">
+              <div class="calib-pt-header">
+                <div class="calib-pt-num">Titik 2</div>
+                <span class="calib-pt-status" id="calib-pt-2-status">Belum diambil</span>
+              </div>
+              <div class="calib-pt-body">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Nilai pH Buffer</label>
+                  <input type="number" class="form-input" id="calib-ph-2" step="0.01" min="0" max="14" placeholder="cth: 6.86" />
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Durasi Sampling</label>
+                  <select class="form-input form-select" id="calib-dur-2">
+                    <option value="60">1 menit</option>
+                    <option value="120" selected>2 menit</option>
+                    <option value="180">3 menit</option>
+                    <option value="240">4 menit</option>
+                    <option value="300">5 menit</option>
+                  </select>
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Rata-rata ADC</label>
+                  <div class="calib-adc-display" id="calib-adc-2">—</div>
+                </div>
+                <div style="display:flex;align-items:flex-end;padding-bottom:2px;">
+                  <button class="btn-calib-sample" id="calib-btn-2" onclick="startCalibSampling(2)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 8 12 12 14 14"/></svg>
+                    Mulai Sampling
+                  </button>
+                </div>
+              </div>
+              <div class="calib-progress-wrap hidden" id="calib-prog-2">
+                <div class="calib-progress-bar" id="calib-prog-bar-2"></div>
+                <div class="calib-progress-label" id="calib-prog-label-2">Sampling…</div>
+              </div>
+            </div>
+
+            <!-- Titik 3 (opsional) -->
+            <div class="calib-point-card calib-pt-optional" id="calib-pt-3">
+              <div class="calib-pt-header">
+                <div class="calib-pt-num">Titik 3 <span class="calib-optional-tag">Opsional</span></div>
+                <span class="calib-pt-status" id="calib-pt-3-status">Belum diambil</span>
+              </div>
+              <div class="calib-pt-body">
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Nilai pH Buffer</label>
+                  <input type="number" class="form-input" id="calib-ph-3" step="0.01" min="0" max="14" placeholder="cth: 9.18" />
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Durasi Sampling</label>
+                  <select class="form-input form-select" id="calib-dur-3">
+                    <option value="60">1 menit</option>
+                    <option value="120" selected>2 menit</option>
+                    <option value="180">3 menit</option>
+                    <option value="240">4 menit</option>
+                    <option value="300">5 menit</option>
+                  </select>
+                </div>
+                <div class="form-group" style="flex:1">
+                  <label class="form-label">Rata-rata ADC</label>
+                  <div class="calib-adc-display" id="calib-adc-3">—</div>
+                </div>
+                <div style="display:flex;align-items:flex-end;padding-bottom:2px;">
+                  <button class="btn-calib-sample" id="calib-btn-3" onclick="startCalibSampling(3)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 8 12 12 14 14"/></svg>
+                    Mulai Sampling
+                  </button>
+                </div>
+              </div>
+              <div class="calib-progress-wrap hidden" id="calib-prog-3">
+                <div class="calib-progress-bar" id="calib-prog-bar-3"></div>
+                <div class="calib-progress-label" id="calib-prog-label-3">Sampling…</div>
+              </div>
+            </div>
+
+          </div><!-- /calib-points-wrap -->
+
+          <!-- Formula hasil kalibrasi -->
+          <div class="calib-result-box" id="calib-result-box" style="display:none">
+            <div class="calib-result-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+              Formula Kalibrasi Aktif
+            </div>
+            <div class="calib-result-grid" id="calib-result-grid"></div>
+          </div>
+
+          <!-- Actions -->
+          <div class="calib-actions">
+            <button class="btn-primary" id="calib-save-btn" onclick="saveCalibration()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Hitung &amp; Simpan Kalibrasi
+            </button>
+            <button class="btn-outline" onclick="resetCalibration()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+              Reset Titik Sampling
+            </button>
+            <button class="btn-outline btn-default-esp32" onclick="resetToEsp32Default()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 7H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="1"/><circle cx="7" cy="12" r="1"/><circle cx="17" cy="12" r="1"/></svg>
+              Gunakan pH dari ESP32
+            </button>
+            <div class="calib-save-status" id="calib-save-status"></div>
+          </div>
+
+          <div class="settings-note" style="margin-top:12px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            Celupkan probe ke larutan buffer, tunggu stabil (~30 detik), lalu klik <strong>Mulai Sampling</strong>. Gunakan minimal 2 titik. 3 titik menggunakan regresi kuadratik untuk akurasi lebih baik.
+          </div>
+        </div>
+
       </div><!-- /settings-grid -->
     </div><!-- /page-pengaturan -->
 
   </main>
+</div>
+
+<!-- ── Rename Modal ──────────────────────────────────────── -->
+<div class="modal-overlay hidden" id="rename-modal" onclick="if(event.target===this)closeRenameModal()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div class="modal-title">Ganti Nama Tampilan</div>
+      <button class="modal-close" onclick="closeRenameModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <label class="form-label" style="font-size:12px">Nama Baru</label>
+      <input type="text" id="rename-input" class="form-input" placeholder="Masukkan nama..." maxlength="32" style="margin-top:6px" />
+      <div class="rename-status" id="rename-status"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-outline" onclick="closeRenameModal()">Batal</button>
+      <button class="btn-primary" id="rename-save-btn" onclick="saveDisplayName()">Simpan</button>
+    </div>
+  </div>
 </div>
 
 <script type="module" src="app.js"></script>

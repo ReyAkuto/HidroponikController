@@ -6,7 +6,7 @@
 import { initializeApp }    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getDatabase, ref, onValue, push, query, limitToLast, orderByKey, get, set, update }
                             from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
-import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut }
+import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut, updateProfile }
                             from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 // ── Firebase Config ───────────────────────────────────────
@@ -44,7 +44,7 @@ let settings = {
 
 // Last Firebase data cache (for settings page display)
 let lastEsp1 = null, lastEsp2 = null, lastSystem = null;
-let lastHistorySaveTime = 0;
+let lastHistorySaveTime = 0; // 0 = belum pernah simpan, akan simpan setelah interval pertama
 
 // Chart refs
 let trendChart = null, sparkPh = null, sparkTds = null;
@@ -99,7 +99,11 @@ function navigate(page) {
   if (page === 'riwayat') loadRiwayat();
 
   // Sync settings display
-  if (page === 'pengaturan') syncSettingsDisplay();
+  if (page === 'pengaturan') {
+    syncSettingsDisplay();
+    renderCalibUI();
+    updateCalibFormulaBadge();
+  }
 
   // Init monitoring charts if needed
   if (page === 'monitoring') {
@@ -467,11 +471,18 @@ function pushHistory(ph, tds, sensors) {
   if (currentPage === 'monitoring') renderMonTable();
 
   // Save to Firebase history at configured interval
-  const now = Date.now();
-  const intervalMs = settings.historyInterval * 60 * 1000;
-  if (ph !== null && tds !== null && (now - lastHistorySaveTime) >= intervalMs) {
-    lastHistorySaveTime = now;
-    saveHistoryRecord(ph, tds, sensors);
+  const _now = Date.now();
+  const _intervalMs = settings.historyInterval * 60 * 1000;
+  if (ph !== null && tds !== null) {
+    const _elapsed = _now - lastHistorySaveTime;
+    const _sisa = Math.ceil((_intervalMs - _elapsed) / 1000);
+    if (_elapsed >= _intervalMs) {
+      lastHistorySaveTime = _now;
+      console.log('[History] >> Simpan riwayat pH:', ph.toFixed(2), 'TDS:', tds.toFixed(1));
+      saveHistoryRecord(ph, tds, sensors);
+    } else {
+      console.log('[History] Simpan berikutnya dalam', _sisa, 'detik');
+    }
   }
 }
 
@@ -500,19 +511,97 @@ function renderMonTable() {
 async function saveHistoryRecord(ph, tds, sensors) {
   try {
     const histRef = ref(db, 'dashboard/history');
-    await push(histRef, {
-      ts:         Date.now(),
-      ph:         ph,
-      tds:        tds,
-      ph_adc:     sensors?.ph_adc     ?? null,
-      ph_voltage: sensors?.ph_voltage  ?? null,
-      tds_adc:    sensors?.tds_adc    ?? null,
-      tds_voltage:sensors?.tds_voltage ?? null,
-      mode:       lastSystem?.connection_mode ?? 'unknown',
-    });
+    const record = {
+      ts:          Date.now(),
+      ph:          ph,
+      tds:         tds,
+      ph_adc:      sensors?.ph_adc      ?? null,
+      ph_voltage:  sensors?.ph_voltage  ?? null,
+      tds_adc:     sensors?.tds_adc     ?? null,
+      tds_voltage: sensors?.tds_voltage ?? null,
+      mode:        lastSystem?.connection_mode ?? 'unknown',
+    };
+    console.log('[History] Pushing ke Firebase:', record);
+    await push(histRef, record);
+    console.log('[History] Berhasil tersimpan ke dashboard/history');
   } catch(e) {
-    console.warn('Gagal simpan histori:', e.message);
+    console.error('[History] Gagal simpan histori:', e.message, e);
   }
+}
+
+
+// ── Firebase: Delete history by date range ────────────────
+async function deleteHistoryRange() {
+  const fromVal = $('delete-from')?.value;
+  const toVal   = $('delete-to')?.value;
+
+  if (!fromVal || !toVal) {
+    showDeleteStatus('Pilih tanggal mulai dan akhir dulu!', true); return;
+  }
+
+  const fromMs = new Date(fromVal).setHours(0, 0, 0, 0);
+  const toMs   = new Date(toVal).setHours(23, 59, 59, 999);
+
+  if (fromMs > toMs) {
+    showDeleteStatus('Tanggal mulai harus sebelum tanggal akhir!', true); return;
+  }
+
+  const confirmEl = $('delete-confirm-row');
+  if (confirmEl && !confirmEl.classList.contains('show')) {
+    // Tampilkan preview dulu berapa data yang akan dihapus
+    showDeleteStatus('Menghitung data...', false);
+    const snap = await get(ref(db, 'dashboard/history'));
+    if (!snap.exists()) { showDeleteStatus('Tidak ada data untuk dihapus.', true); return; }
+
+    let count = 0;
+    snap.forEach(child => {
+      const ts = child.val()?.ts;
+      if (ts >= fromMs && ts <= toMs) count++;
+    });
+
+    if (count === 0) {
+      showDeleteStatus('Tidak ada data di rentang tanggal tersebut.', true); return;
+    }
+
+    setText('delete-count-preview', count);
+    confirmEl.classList.add('show');
+    showDeleteStatus('', false);
+    return;
+  }
+
+  // Sudah konfirmasi — eksekusi hapus
+  if (confirmEl) confirmEl.classList.remove('show');
+  showDeleteStatus('Menghapus data...', false);
+
+  try {
+    const snap = await get(ref(db, 'dashboard/history'));
+    if (!snap.exists()) { showDeleteStatus('Tidak ada data.', true); return; }
+
+    const toDelete = [];
+    snap.forEach(child => {
+      const ts = child.val()?.ts;
+      if (ts >= fromMs && ts <= toMs) toDelete.push(child.key);
+    });
+
+    // Hapus semua key yang masuk range
+    const updates = {};
+    toDelete.forEach(key => { updates[key] = null; });
+    await update(ref(db, 'dashboard/history'), updates);
+
+    showDeleteStatus(`✓ ${toDelete.length} data berhasil dihapus!`, false);
+    pushNotif('Riwayat Dihapus', `${toDelete.length} data dihapus (${fromVal} s/d ${toVal})`, 'warn');
+    loadRiwayat();
+  } catch(e) {
+    console.error('deleteHistoryRange error:', e);
+    showDeleteStatus('Gagal hapus: ' + e.message, true);
+  }
+}
+
+function showDeleteStatus(msg, isError) {
+  const el = $('delete-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'delete-status ' + (isError ? 'error' : msg ? 'success' : '');
 }
 
 // ── Firebase: Load history ────────────────────────────────
@@ -531,7 +620,7 @@ async function loadRiwayat() {
     }
 
     const rows = [];
-    snap.forEach(child => rows.push(child.val()));
+    snap.forEach(child => rows.push({ key: child.key, ...child.val() }));
     rows.reverse(); // newest first
 
     // Summary stats
@@ -663,7 +752,15 @@ function updateDashboard(esp1, esp2, system) {
   console.log('[Dashboard] update — esp1:', esp1, 'system:', system);
 
   const sensors = esp1?.sensors || {};
-  const ph  = (sensors.ph  != null) ? Number(sensors.ph)  : null;
+
+  // Gunakan formula kalibrasi jika tersedia, fallback ke ph dari Firebase
+  let ph;
+  if (calibFormula && sensors.ph_adc != null) {
+    const calibPh = adcToPh(Number(sensors.ph_adc));
+    ph = (calibPh !== null) ? calibPh : ((sensors.ph != null) ? Number(sensors.ph) : null);
+  } else {
+    ph = (sensors.ph != null) ? Number(sensors.ph) : null;
+  }
   const tds = (sensors.tds != null) ? Number(sensors.tds) : null;
 
   console.log('[Dashboard] ph:', ph, 'tds:', tds);
@@ -813,8 +910,10 @@ function updateDashboard(esp1, esp2, system) {
     }
   }
 
-  // Live-sync settings page if open
-  if (currentPage === 'pengaturan') syncSettingsDisplay();
+  // Live-sync settings page if open, tapi skip kalau user lagi aktif di form input
+  if (currentPage === 'pengaturan' && !document.activeElement?.closest('.settings-grid')) {
+    syncSettingsDisplay();
+  }
 }
 
 // ── Pump Control State ────────────────────────────────────
@@ -957,6 +1056,7 @@ function showDashboard(user) {
   if (overlay) { overlay.classList.add('hidden'); setTimeout(() => overlay.style.display = 'none', 300); }
 
   loadSettings();
+  loadCalibration();
   updatePlantInfo();
   initDashboardCharts();
   startListeners();
@@ -964,6 +1064,368 @@ function showDashboard(user) {
   startControlListener();
   pushNotif('Sistem dimulai', 'Dashboard berhasil terhubung ke Firebase.', 'info');
   updateClock();
+}
+
+// ── Rename Display Name ──────────────────────────────────
+window.openRenameModal = function() {
+  const modal = $('rename-modal');
+  const input = $('rename-input');
+  if (!modal || !input) return;
+  const current = auth.currentUser?.displayName || '';
+  input.value = current;
+  modal.classList.remove('hidden');
+  setTimeout(() => input.focus(), 100);
+};
+
+window.closeRenameModal = function() {
+  $('rename-modal')?.classList.add('hidden');
+  $('rename-status').textContent = '';
+};
+
+window.saveDisplayName = async function() {
+  const input   = $('rename-input');
+  const status  = $('rename-status');
+  const saveBtn = $('rename-save-btn');
+  const newName = input?.value.trim();
+
+  if (!newName) { status.textContent = 'Nama tidak boleh kosong!'; status.className = 'rename-status error'; return; }
+  if (!auth.currentUser) { status.textContent = 'Tidak ada user aktif.'; status.className = 'rename-status error'; return; }
+
+  saveBtn.disabled = true;
+  status.textContent = 'Menyimpan...';
+  status.className = 'rename-status';
+
+  try {
+    await updateProfile(auth.currentUser, { displayName: newName });
+
+    // Update semua tampilan nama di UI
+    const initials = newName.slice(0,1).toUpperCase();
+    setText('sidebar-username',     newName);
+    setText('sidebar-avatar',       initials);
+    setText('topbar-greeting-name', newName.charAt(0).toUpperCase() + newName.slice(1) + '!');
+    setText('set-user-display',     auth.currentUser.email);
+
+    status.textContent = '✓ Nama berhasil diubah!';
+    status.className = 'rename-status success';
+    pushNotif('Profil Diperbarui', `Nama diubah menjadi "${newName}"`, 'ok');
+    setTimeout(() => closeRenameModal(), 1200);
+  } catch(e) {
+    status.textContent = 'Gagal: ' + e.message;
+    status.className = 'rename-status error';
+  } finally {
+    saveBtn.disabled = false;
+  }
+};
+
+// ── pH Calibration ────────────────────────────────────────
+// calibPoints[n] = { ph: float, adc: float } — n = 1,2,3
+const calibPoints = { 1: null, 2: null, 3: null };
+let   calibFormula = null;   // { type:'linear'|'quadratic', coeffs:[...] }
+let   calibSamplingActive = false;
+
+// Load kalibrasi dari localStorage saat startup
+function loadCalibration() {
+  try {
+    const saved = localStorage.getItem('phCalibration');
+    if (saved) {
+      const data = JSON.parse(saved);
+      if (data.points) Object.assign(calibPoints, data.points);
+      if (data.formula) calibFormula = data.formula;
+      renderCalibUI();
+      updateCalibFormulaBadge();
+    }
+  } catch(e) { console.warn('loadCalibration error:', e); }
+}
+
+function persistCalibration() {
+  try {
+    localStorage.setItem('phCalibration', JSON.stringify({ points: calibPoints, formula: calibFormula }));
+  } catch(e) {}
+}
+
+// Simpan ke Firebase juga agar bisa di-read ESP32/app lain
+async function pushCalibToFirebase() {
+  if (!calibFormula) return;
+  try {
+    await set(ref(db, 'dashboard/ph_calibration'), {
+      formula: calibFormula,
+      points: calibPoints,
+      updated_at: Date.now()
+    });
+    console.log('[Calib] Disimpan ke Firebase.');
+  } catch(e) {
+    console.warn('[Calib] Gagal simpan ke Firebase:', e.message);
+  }
+}
+
+// Konversi ADC → pH menggunakan formula kalibrasi
+function adcToPh(adc) {
+  if (!calibFormula || adc == null) return null;
+  const c = calibFormula.coeffs;
+  if (calibFormula.type === 'linear') {
+    // ph = c[0]*adc + c[1]
+    return c[0] * adc + c[1];
+  } else if (calibFormula.type === 'quadratic') {
+    // ph = c[0]*adc^2 + c[1]*adc + c[2]
+    return c[0] * adc * adc + c[1] * adc + c[2];
+  }
+  return null;
+}
+
+// Mulai sampling ADC untuk titik kalibrasi ke-n
+window.startCalibSampling = function(n) {
+  if (calibSamplingActive) {
+    showCalibStatus('Ada proses sampling berjalan, tunggu selesai dulu.', true);
+    return;
+  }
+
+  const phInput = $(`calib-ph-${n}`);
+  const phVal   = parseFloat(phInput?.value);
+  if (isNaN(phVal) || phVal < 0 || phVal > 14) {
+    showCalibStatus(`Masukkan nilai pH buffer yang valid untuk Titik ${n}!`, true);
+    phInput?.focus();
+    return;
+  }
+
+  const durSec = parseInt($(`calib-dur-${n}`)?.value || '10');
+  calibSamplingActive = true;
+
+  // UI update
+  const btn     = $(`calib-btn-${n}`);
+  const progWrap = $(`calib-prog-${n}`);
+  const progBar  = $(`calib-prog-bar-${n}`);
+  const progLbl  = $(`calib-prog-label-${n}`);
+  const status   = $(`calib-pt-${n}-status`);
+
+  if (btn)     { btn.disabled = true; btn.classList.add('sampling'); }
+  if (progWrap) progWrap.classList.remove('hidden');
+  if (progBar)  progBar.style.width = '0%';
+  if (status)   { status.textContent = 'Sampling…'; status.className = 'calib-pt-status sampling'; }
+  showCalibStatus('');
+
+  const adcSamples = [];
+  const intervalMs = 1000; // ambil sample setiap 1 detik
+  const totalTicks = durSec;
+  let   tick       = 0;
+  let   done       = false;
+
+  const sampleInterval = setInterval(() => {
+    // Ambil ADC langsung dari cache terakhir Firebase
+    const rawAdc = lastEsp1?.sensors?.ph_adc;
+    if (rawAdc != null && !isNaN(Number(rawAdc))) {
+      adcSamples.push(Number(rawAdc));
+    }
+
+    tick++;
+    const pct = Math.round((tick / totalTicks) * 100);
+    if (progBar)  progBar.style.width = pct + '%';
+    const sisaSec = totalTicks - tick;
+    const sisaStr = sisaSec >= 60
+      ? `${Math.floor(sisaSec/60)}m ${sisaSec%60}d`
+      : `${sisaSec}d`;
+    if (progLbl)  progLbl.textContent = adcSamples.length > 0
+      ? `Sampling… sisa ${sisaStr} — ADC: ${Number(rawAdc ?? 0).toFixed(0)} (${adcSamples.length} sampel)`
+      : `Menunggu data ADC… sisa ${sisaStr}`;
+
+    if (tick >= totalTicks && !done) {
+      done = true;
+      clearInterval(sampleInterval);
+      finishSampling(n, phVal, adcSamples, btn, progWrap, status);
+    }
+  }, intervalMs);
+};
+
+function finishSampling(n, phVal, samples, btn, progWrap, status) {
+  calibSamplingActive = false;
+  if (btn) { btn.disabled = false; btn.classList.remove('sampling'); }
+
+  if (samples.length === 0) {
+    if (status) { status.textContent = 'Gagal — tidak ada data ADC'; status.className = 'calib-pt-status'; }
+    if (progWrap) progWrap.classList.add('hidden');
+    showCalibStatus('Tidak ada data ADC masuk. Pastikan sensor terhubung dan Firebase streaming aktif.', true);
+    return;
+  }
+
+  // Rata-rata ADC (buang 10% outlier atas-bawah jika sampel cukup)
+  samples.sort((a,b) => a - b);
+  let trimmed = samples;
+  if (samples.length >= 10) {
+    const cut = Math.floor(samples.length * 0.1);
+    trimmed   = samples.slice(cut, samples.length - cut);
+  }
+  const avgAdc = trimmed.reduce((a,b) => a+b, 0) / trimmed.length;
+
+  calibPoints[n] = { ph: phVal, adc: avgAdc };
+
+  // Update UI
+  const adcDisplay = $(`calib-adc-${n}`);
+  if (adcDisplay) adcDisplay.textContent = avgAdc.toFixed(1);
+  if (status) { status.textContent = `✓ ADC: ${avgAdc.toFixed(1)}`; status.className = 'calib-pt-status done'; }
+  if (progWrap) progWrap.classList.add('hidden');
+
+  const card = $(`calib-pt-${n}`);
+  if (card) card.classList.add('done');
+
+  showCalibStatus(`Titik ${n} berhasil: pH ${phVal} → ADC ${avgAdc.toFixed(1)} (${samples.length} sampel)`, false);
+  console.log(`[Calib] Titik ${n}: pH=${phVal}, ADC avg=${avgAdc.toFixed(2)}, samples=${samples.length}`);
+}
+
+// Hitung & simpan formula kalibrasi dari titik-titik yang ada
+window.saveCalibration = function() {
+  const pts = [1,2,3].map(n => calibPoints[n]).filter(p => p != null);
+
+  if (pts.length < 2) {
+    showCalibStatus('Butuh minimal 2 titik kalibrasi! Lakukan sampling Titik 1 dan 2 dulu.', true);
+    return;
+  }
+
+  // Sort by ADC
+  pts.sort((a,b) => a.adc - b.adc);
+
+  if (pts.length === 2) {
+    // Linear regression: ph = m*adc + b
+    const [p1, p2] = pts;
+    const m = (p2.ph - p1.ph) / (p2.adc - p1.adc);
+    const b = p1.ph - m * p1.adc;
+    calibFormula = { type: 'linear', coeffs: [m, b], points: pts, createdAt: Date.now() };
+    console.log(`[Calib] Linear: ph = ${m.toExponential(4)} * adc + ${b.toFixed(4)}`);
+  } else {
+    // Quadratic regression (least squares, 3 points)
+    // Solve: [adc^2, adc, 1] * [a,b,c]^T = ph
+    const [p1, p2, p3] = pts;
+    const x1 = p1.adc, x2 = p2.adc, x3 = p3.adc;
+    const y1 = p1.ph,  y2 = p2.ph,  y3 = p3.ph;
+    // Cramer's rule for 3x3 system
+    const det = x1*x1*(x2-x3) - x2*x2*(x1-x3) + x3*x3*(x1-x2);
+    if (Math.abs(det) < 1e-10) {
+      // Titik kolinear, pakai linear saja
+      const m = (p3.ph - p1.ph) / (p3.adc - p1.adc);
+      const b = p1.ph - m * p1.adc;
+      calibFormula = { type: 'linear', coeffs: [m, b], points: pts, createdAt: Date.now() };
+    } else {
+      const a = (y1*(x2-x3) - x1*(y2-y3) + (x2*y3-x3*y2)) / det;
+      const b = (x1*x1*(y2-y3) - y1*(x1*x1-x3*x3) + x3*x3*(y1-y2)) / det; // simplified
+      // Use numpy-style: solve via direct formula
+      // Better: standard quadratic through 3 points
+      const denom = (x1-x2)*(x1-x3)*(x2-x3);
+      const A = (x3*(y2-y1) + x2*(y1-y3) + x1*(y3-y2)) / denom;
+      const B = (x3*x3*(y1-y2) + x2*x2*(y3-y1) + x1*x1*(y2-y3)) / denom;
+      const C = (x2*x3*(x2-x3)*y1 + x3*x1*(x3-x1)*y2 + x1*x2*(x1-x2)*y3) / denom;
+      calibFormula = { type: 'quadratic', coeffs: [A, B, C], points: pts, createdAt: Date.now() };
+      console.log(`[Calib] Quadratic: ph = ${A.toExponential(4)}*adc² + ${B.toExponential(4)}*adc + ${C.toFixed(4)}`);
+    }
+  }
+
+  persistCalibration();
+  pushCalibToFirebase();
+  renderCalibResultBox();
+  updateCalibFormulaBadge();
+
+  const typeTxt = calibFormula.type === 'quadratic' ? 'kuadratik (3 titik)' : 'linear (2 titik)';
+  showCalibStatus(`✓ Kalibrasi disimpan! Formula ${typeTxt} aktif.`, false);
+  pushNotif('Kalibrasi pH Disimpan', `Formula ${typeTxt} telah diterapkan ke sensor pH.`, 'ok');
+};
+
+window.resetToEsp32Default = function() {
+  if (!confirm('Nonaktifkan kalibrasi dashboard? pH akan diambil langsung dari nilai yang dikirim ESP32 (tanpa konversi ADC).')) return;
+  calibPoints[1] = null; calibPoints[2] = null; calibPoints[3] = null;
+  calibFormula = null;
+  persistCalibration();
+  // Hapus dari Firebase juga
+  try { set(ref(db, 'dashboard/ph_calibration'), null); } catch(e) {}
+  renderCalibUI();
+  updateCalibFormulaBadge();
+  showCalibStatus('✓ Kalibrasi dinonaktifkan — pH kini dibaca langsung dari ESP32.', false);
+  pushNotif('Kalibrasi pH Dinonaktifkan', 'pH kembali menggunakan nilai langsung dari ESP32.', 'info');
+};
+
+window.resetCalibration = function() {
+  if (!confirm('Reset semua titik sampling? Formula kalibrasi yang ada akan tetap aktif sampai kamu simpan ulang atau gunakan pH dari ESP32.')) return;
+  calibPoints[1] = null; calibPoints[2] = null; calibPoints[3] = null;
+  renderCalibUI();
+  showCalibStatus('Titik sampling direset. Lakukan sampling ulang lalu simpan.', false);
+};
+
+function renderCalibUI() {
+  [1,2,3].forEach(n => {
+    const pt = calibPoints[n];
+    const card   = $(`calib-pt-${n}`);
+    const status = $(`calib-pt-${n}-status`);
+    const adcEl  = $(`calib-adc-${n}`);
+    const phIn   = $(`calib-ph-${n}`);
+
+    if (pt) {
+      if (card)   card.classList.add('done');
+      if (status) { status.textContent = `✓ ADC: ${pt.adc.toFixed(1)}`; status.className = 'calib-pt-status done'; }
+      if (adcEl)  adcEl.textContent = pt.adc.toFixed(1);
+      if (phIn)   phIn.value = pt.ph;
+    } else {
+      if (card)   card.classList.remove('done');
+      if (status) { status.textContent = 'Belum diambil'; status.className = 'calib-pt-status'; }
+      if (adcEl)  adcEl.textContent = '—';
+    }
+  });
+
+  if (calibFormula) renderCalibResultBox();
+  else {
+    const box = $('calib-result-box');
+    if (box) box.style.display = 'none';
+  }
+}
+
+function renderCalibResultBox() {
+  const box  = $('calib-result-box');
+  const grid = $('calib-result-grid');
+  if (!box || !grid || !calibFormula) return;
+
+  const c    = calibFormula.coeffs;
+  let   html = '';
+
+  if (calibFormula.type === 'linear') {
+    html += `<div class="calib-result-item"><div class="calib-result-label">Tipe Formula</div><div class="calib-result-val">Linear (y = mx + b)</div></div>`;
+    html += `<div class="calib-result-item"><div class="calib-result-label">Slope (m)</div><div class="calib-result-val">${c[0].toExponential(4)}</div></div>`;
+    html += `<div class="calib-result-item"><div class="calib-result-label">Intercept (b)</div><div class="calib-result-val">${c[1].toFixed(4)}</div></div>`;
+  } else {
+    html += `<div class="calib-result-item"><div class="calib-result-label">Tipe Formula</div><div class="calib-result-val">Kuadratik (ax²+bx+c)</div></div>`;
+    html += `<div class="calib-result-item"><div class="calib-result-label">a</div><div class="calib-result-val">${c[0].toExponential(4)}</div></div>`;
+    html += `<div class="calib-result-item"><div class="calib-result-label">b</div><div class="calib-result-val">${c[1].toExponential(4)}</div></div>`;
+    html += `<div class="calib-result-item"><div class="calib-result-label">c</div><div class="calib-result-val">${c[2].toFixed(4)}</div></div>`;
+  }
+
+  // Tunjukkan prediksi pH saat ini
+  const rawAdc = lastEsp1?.sensors?.ph_adc;
+  if (rawAdc != null) {
+    const predicted = adcToPh(Number(rawAdc));
+    if (predicted !== null) {
+      html += `<div class="calib-result-item"><div class="calib-result-label">pH saat ini (ADC: ${rawAdc})</div><div class="calib-result-val" style="color:var(--ok)">${predicted.toFixed(2)}</div></div>`;
+    }
+  }
+
+  const when = calibFormula.createdAt ? new Date(calibFormula.createdAt).toLocaleString('id-ID') : '—';
+  html += `<div class="calib-result-item"><div class="calib-result-label">Dikalibrasi</div><div class="calib-result-val" style="font-size:12px">${when}</div></div>`;
+
+  grid.innerHTML = html;
+  box.style.display = 'block';
+}
+
+function updateCalibFormulaBadge() {
+  const badge = $('calib-formula-badge');
+  if (!badge) return;
+  if (calibFormula) {
+    const typeTxt = calibFormula.type === 'quadratic' ? `Kuadratik (3 titik)` : `Linear (2 titik)`;
+    badge.textContent = `✓ ${typeTxt}`;
+    badge.classList.add('active');
+  } else {
+    badge.textContent = 'Belum dikalibrasi';
+    badge.classList.remove('active');
+  }
+}
+
+function showCalibStatus(msg, isError = false) {
+  const el = $('calib-save-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'calib-save-status ' + (isError ? 'error' : msg ? 'ok' : '');
 }
 
 // ── DOM ready event wiring ────────────────────────────────
@@ -989,6 +1451,17 @@ document.addEventListener('DOMContentLoaded', () => {
   if (rfBtn) rfBtn.addEventListener('click', loadRiwayat);
   const rfFilter = $('riwayat-filter');
   if (rfFilter) rfFilter.addEventListener('change', loadRiwayat);
+
+  // Riwayat: delete range
+  const delBtn = $('delete-range-btn');
+  if (delBtn) delBtn.addEventListener('click', deleteHistoryRange);
+  const delConfirmBtn = $('delete-confirm-btn');
+  if (delConfirmBtn) delConfirmBtn.addEventListener('click', deleteHistoryRange);
+  const delCancelBtn = $('delete-cancel-btn');
+  if (delCancelBtn) delCancelBtn.addEventListener('click', () => {
+    $('delete-confirm-row')?.classList.remove('show');
+    showDeleteStatus('', false);
+  });
 
   // Notifikasi: filter buttons
   document.querySelectorAll('.notif-filter-btn').forEach(btn => {
@@ -1046,6 +1519,10 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // DOM siap — trigger auth jika sudah login sebelumnya
+  // Enter key di rename modal
+  const renameInput = $('rename-input');
+  if (renameInput) renameInput.addEventListener('keydown', e => { if (e.key === 'Enter') saveDisplayName(); if (e.key === 'Escape') closeRenameModal(); });
+
   domReady = true;
   if (pendingUser) onDomAndAuth(pendingUser);
 });
