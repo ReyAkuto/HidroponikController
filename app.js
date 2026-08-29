@@ -954,6 +954,10 @@ function updateDashboard(esp1, esp2, system) {
   renderPump('pump-nutrisi', 'Pompa Nutrisi (AB Mix)', pump.nutrisi_active || false, mode);
   renderPump('pump-water',   'Pompa Air Murni',        pump.water_active   || false, mode);
 
+  // Re-sync tombol mode & state pompa setelah render ulang
+  // (renderPump recreate innerHTML → tombol harus di-update lagi)
+  updatePumpControlUI();
+
   // LoRa
   const relay = esp2?.relay || {};
   const loraSection = $('lora-section');
