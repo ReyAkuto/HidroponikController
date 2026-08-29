@@ -301,7 +301,7 @@
               <div class="status-row">
                 <span class="label">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>
-                  Target pH
+                  Target TDS
                 </span>
                 <span class="val muted" id="row-target-ph">—</span>
               </div>
@@ -325,22 +325,22 @@
 
             <!-- Status + Tombol Pompa -->
             <div class="pump-list">
-              <div class="pump-item" id="pump-up">
+              <div class="pump-item" id="pump-nutrisi">
                 <div class="pump-dot off"></div>
-                <span class="pump-name">Pompa pH Up</span>
+                <span class="pump-name">Pompa Nutrisi</span>
                 <span class="pump-status off">—</span>
-                <button class="pump-ctrl-btn off" id="btn-pump-up" onclick="togglePump('up')" disabled>ON</button>
+                <button class="pump-ctrl-btn off" id="btn-pump-nutrisi" onclick="togglePump('nutrisi')" disabled>ON</button>
               </div>
-              <div class="pump-item" id="pump-down">
+              <div class="pump-item" id="pump-water">
                 <div class="pump-dot off"></div>
-                <span class="pump-name">Pompa pH Down</span>
+                <span class="pump-name">Pompa Air Murni</span>
                 <span class="pump-status off">—</span>
-                <button class="pump-ctrl-btn off" id="btn-pump-down" onclick="togglePump('down')" disabled>ON</button>
+                <button class="pump-ctrl-btn off" id="btn-pump-water" onclick="togglePump('water')" disabled>ON</button>
               </div>
             </div>
 
             <div class="pump-ctrl-note" id="pump-ctrl-note">
-              Aktifkan mode <strong>Manual</strong> untuk mengontrol pompa dari sini.
+              Aktifkan mode <strong>Manual</strong> untuk mengontrol pompa dari sini. Pompa Air Murni memiliki prioritas lebih tinggi.
             </div>
           </div>
 
@@ -669,31 +669,35 @@
           </div>
         </div>
 
-        <!-- Target pH (read-only dari Firebase) -->
+        <!-- Target TDS & pH (read-only dari Firebase) -->
         <div class="settings-card">
           <div class="settings-card-header">
             <div class="settings-icon blue">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/><path d="M8 12h4m0 0V8m0 4v4"/>
+                <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
               </svg>
             </div>
             <div>
-              <div class="settings-card-title">Target pH Sistem</div>
+              <div class="settings-card-title">Status Pompa &amp; Target Sistem</div>
               <div class="settings-card-desc">Dibaca dari ESP32 via Firebase (read-only)</div>
             </div>
           </div>
           <div class="settings-info-box">
             <div class="info-row">
-              <span class="info-label">Target pH saat ini</span>
-              <span class="info-val" id="set-target-ph-display">—</span>
+              <span class="info-label">Range TDS Target</span>
+              <span class="info-val" id="set-tds-range-display">—</span>
             </div>
             <div class="info-row">
-              <span class="info-label">Pompa pH Up</span>
-              <span class="info-val" id="set-pump-up-display">—</span>
+              <span class="info-label">Range pH Trigger Air</span>
+              <span class="info-val" id="set-ph-range-display">—</span>
             </div>
             <div class="info-row">
-              <span class="info-label">Pompa pH Down</span>
-              <span class="info-val" id="set-pump-down-display">—</span>
+              <span class="info-label">Pompa Nutrisi</span>
+              <span class="info-val" id="set-pump-nutrisi-display">—</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">Pompa Air Murni</span>
+              <span class="info-val" id="set-pump-water-display">—</span>
             </div>
             <div class="info-row">
               <span class="info-label">Mode Koneksi</span>
@@ -708,7 +712,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13">
               <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
-            Mode Manual: pompa dikontrol dari website. Mode Otomatis: ESP32 mengatur sendiri berdasarkan pH.
+            Mode Manual: pompa dikontrol dari website. Mode Otomatis: ESP32 mengatur sendiri — nutrisi jika TDS rendah, air murni jika TDS tinggi atau pH di luar range.
           </div>
         </div>
 
@@ -789,7 +793,7 @@
             </div>
             <div class="info-row">
               <span class="info-label">Versi Dashboard</span>
-              <span class="info-val">v2.0.0</span>
+              <span class="info-val">v2.1.0</span>
             </div>
           </div>
           <button class="btn-outline btn-danger-outline" id="settings-logout-btn" style="margin-top:12px;width:100%">

@@ -661,6 +661,40 @@ a { text-decoration: none; color: inherit; }
   transition: opacity 0.2s;
 }
 
+/* Pump Water — aksen biru (air murni) */
+#pump-water .pump-dot.on  { background: var(--relay); }
+#pump-water .pump-status.on { color: var(--relay); }
+#pump-water .pump-ctrl-btn.on {
+  background: var(--relay-bg);
+  color: var(--relay);
+  border-color: var(--relay);
+}
+/* Pump Nutrisi — aksen hijau (default ok) */
+#pump-nutrisi .pump-dot.on  { background: var(--ok); }
+#pump-nutrisi .pump-status.on { color: var(--ok); }
+
+/* Label pompa water dengan dot biru kecil */
+#pump-water .pump-name::before {
+  content: '';
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--relay);
+  margin-right: 5px;
+  vertical-align: middle;
+  opacity: 0.6;
+}
+#pump-nutrisi .pump-name::before {
+  content: '';
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  margin-right: 5px;
+  vertical-align: middle;
+  opacity: 0.6;
+}
+
 /* ── LoRa Signal Card ────────────────────────────────────── */
 .lora-card {
   background: var(--s1);

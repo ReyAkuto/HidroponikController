@@ -757,9 +757,14 @@ function syncSettingsDisplay() {
 
   // Firebase read-only values
   const pump = lastEsp1?.pump || {};
-  setText('set-target-ph-display', pump.target_ph != null ? Number(pump.target_ph).toFixed(2) + ' pH' : '—');
-  setText('set-pump-up-display',   pump.up_active   ? 'Aktif' : 'Nonaktif');
-  setText('set-pump-down-display', pump.down_active ? 'Aktif' : 'Nonaktif');
+  const tdsMinDisp = pump.tds_min != null ? `${Math.round(pump.tds_min)} ppm` : '—';
+  const tdsMaxDisp = pump.tds_max != null ? `${Math.round(pump.tds_max)} ppm` : '—';
+  const phMinDisp  = pump.ph_min  != null ? `${Number(pump.ph_min).toFixed(1)}` : '—';
+  const phMaxDisp  = pump.ph_max  != null ? `${Number(pump.ph_max).toFixed(1)}` : '—';
+  setText('set-tds-range-display',  `${tdsMinDisp} – ${tdsMaxDisp}`);
+  setText('set-ph-range-display',   `${phMinDisp} – ${phMaxDisp}`);
+  setText('set-pump-nutrisi-display', pump.nutrisi_active ? 'Aktif' : 'Nonaktif');
+  setText('set-pump-water-display',   pump.water_active   ? 'Aktif' : 'Nonaktif');
   const mode = lastSystem?.connection_mode;
   setText('set-conn-mode-display', mode === 'internet' ? 'Internet Langsung' : mode === 'lora_relay' ? 'LoRa Relay' : '—');
   setText('set-ctrl-mode-display', pumpControlMode === 'manual' ? 'Manual (Website)' : 'Otomatis (ESP32)');
@@ -778,10 +783,10 @@ function renderPump(id, name, active, connMode) {
   const statCls = unavailable ? 'off' : active ? 'on' : 'off';
   const statTxt = unavailable ? 'N/A' : active ? 'Aktif' : 'Nonaktif';
 
-  // Tentukan pump key dari id ('pump-up' → 'up', 'pump-down' → 'down')
+  // Tentukan pump key dari id ('pump-nutrisi' → 'nutrisi', 'pump-water' → 'water')
   const pumpKey  = id.replace('pump-', '');
   const isManual = pumpControlMode === 'manual';
-  const isOn     = pumpKey === 'up' ? pumpUpState : pumpDownState;
+  const isOn     = pumpKey === 'nutrisi' ? pumpNutrisiState : pumpWaterState;
   const btnId    = `btn-pump-${pumpKey}`;
 
   el.innerHTML = `
@@ -933,8 +938,11 @@ function updateDashboard(esp1, esp2, system) {
   }
   prevEsp2Online = esp2Online;
 
-  const setPH = esp1?.pump?.target_ph;
-  setText('row-target-ph', setPH != null ? `${Number(setPH).toFixed(2)}` : '—');
+  const pumpRow = esp1?.pump || {};
+  const tdsRangeStr = (pumpRow.tds_min != null && pumpRow.tds_max != null)
+    ? `${Math.round(pumpRow.tds_min)}–${Math.round(pumpRow.tds_max)} ppm`
+    : '—';
+  setText('row-target-ph', tdsRangeStr);
 
   const connMode = esp1?.connection?.mode || mode;
   setText('row-conn-mode', connMode === 'internet' ? 'Internet' : connMode === 'lora_relay' ? 'LoRa Relay' : '—');
@@ -943,8 +951,8 @@ function updateDashboard(esp1, esp2, system) {
 
   // Pumps
   const pump = esp1?.pump || {};
-  renderPump('pump-up',   'Pompa pH Up',   pump.up_active   || false, mode);
-  renderPump('pump-down', 'Pompa pH Down', pump.down_active || false, mode);
+  renderPump('pump-nutrisi', 'Pompa Nutrisi (AB Mix)', pump.nutrisi_active || false, mode);
+  renderPump('pump-water',   'Pompa Air Murni',        pump.water_active   || false, mode);
 
   // LoRa
   const relay = esp2?.relay || {};
@@ -968,9 +976,9 @@ function updateDashboard(esp1, esp2, system) {
 }
 
 // ── Pump Control State ────────────────────────────────────
-let pumpControlMode = 'auto';   // 'auto' | 'manual'
-let pumpUpState     = false;
-let pumpDownState   = false;
+let pumpControlMode  = 'auto';   // 'auto' | 'manual'
+let pumpNutrisiState = false;    // state pompa nutrisi AB Mix
+let pumpWaterState   = false;    // state pompa air murni
 
 const CONTROL_PATH = 'hydroponic/esp1/control';
 
@@ -979,14 +987,14 @@ async function initControlNode() {
   const ctrlRef = ref(db, CONTROL_PATH);
   const snap = await get(ctrlRef);
   if (!snap.exists()) {
-    await set(ctrlRef, { mode: 'auto', pump_up: false, pump_down: false });
+    await set(ctrlRef, { mode: 'auto', pump_nutrisi: false, pump_water: false });
   }
 }
 
 // Ubah mode (auto / manual)
 window.setPumpMode = async function(mode) {
   try {
-    await update(ref(db, CONTROL_PATH), { mode, pump_up: false, pump_down: false });
+    await update(ref(db, CONTROL_PATH), { mode, pump_nutrisi: false, pump_water: false });
     pumpControlMode = mode;
     updatePumpControlUI();
     pushNotif('Mode Pompa', `Mode diubah ke: ${mode === 'manual' ? 'Manual' : 'Otomatis'}`, 'info');
@@ -997,21 +1005,23 @@ window.setPumpMode = async function(mode) {
 };
 
 // Toggle pompa individual (hanya aktif di mode manual)
+// pump: 'nutrisi' | 'water'
 window.togglePump = async function(pump) {
   if (pumpControlMode !== 'manual') return;
-  const isUp    = pump === 'up';
-  const current = isUp ? pumpUpState : pumpDownState;
-  const newVal  = !current;
+  const isNutrisi = pump === 'nutrisi';
+  const current   = isNutrisi ? pumpNutrisiState : pumpWaterState;
+  const newVal    = !current;
 
-  // Jika nyalakan satu pompa, matikan pompa lain (tidak boleh keduanya ON)
+  // Air murni prioritas — kalau nyalakan air, matikan nutrisi; keduanya tidak boleh ON bersamaan
   const updates = {
     [`pump_${pump}`]: newVal,
-    ...(newVal ? { [`pump_${isUp ? 'down' : 'up'}`]: false } : {})
+    ...(newVal ? { [`pump_${isNutrisi ? 'water' : 'nutrisi'}`]: false } : {})
   };
 
   try {
     await update(ref(db, CONTROL_PATH), updates);
-    pushNotif('Kontrol Manual', `Pompa pH ${isUp ? 'Up' : 'Down'} → ${newVal ? 'ON' : 'OFF'}`, newVal ? 'warn' : 'info');
+    const label = isNutrisi ? 'Nutrisi (AB Mix)' : 'Air Murni';
+    pushNotif('Kontrol Manual', `Pompa ${label} → ${newVal ? 'ON' : 'OFF'}`, newVal ? 'warn' : 'info');
   } catch (err) {
     console.error('togglePump error:', err);
     pushNotif('Error', 'Gagal mengontrol pompa: ' + err.message, 'danger');
@@ -1036,27 +1046,24 @@ function updatePumpControlUI() {
   if (btnManual) btnManual.classList.toggle('active',  isManual);
 
   // Pompa control buttons
-  const btnUp   = $('btn-pump-up');
-  const btnDown = $('btn-pump-down');
-  const note    = $('pump-ctrl-note');
-
-  if (btnUp)   { btnUp.disabled   = !isManual; }
-  if (btnDown) { btnDown.disabled = !isManual; }
+  const btnNutrisi = $('btn-pump-nutrisi');
+  const btnWater   = $('btn-pump-water');
+  const note       = $('pump-ctrl-note');
 
   if (note) {
     note.style.opacity = isManual ? '0' : '1';
   }
 
   // Update tombol label & style sesuai state pompa
-  if (btnUp) {
-    btnUp.textContent = pumpUpState ? 'OFF' : 'ON';
-    btnUp.className   = `pump-ctrl-btn ${pumpUpState ? 'on' : 'off'}`;
-    if (!isManual) btnUp.disabled = true;
+  if (btnNutrisi) {
+    btnNutrisi.textContent = pumpNutrisiState ? 'OFF' : 'ON';
+    btnNutrisi.className   = `pump-ctrl-btn ${pumpNutrisiState ? 'on' : 'off'}`;
+    btnNutrisi.disabled    = !isManual;
   }
-  if (btnDown) {
-    btnDown.textContent = pumpDownState ? 'OFF' : 'ON';
-    btnDown.className   = `pump-ctrl-btn ${pumpDownState ? 'on' : 'off'}`;
-    if (!isManual) btnDown.disabled = true;
+  if (btnWater) {
+    btnWater.textContent = pumpWaterState ? 'OFF' : 'ON';
+    btnWater.className   = `pump-ctrl-btn ${pumpWaterState ? 'on' : 'off'}`;
+    btnWater.disabled    = !isManual;
   }
 }
 
@@ -1065,9 +1072,9 @@ function startControlListener() {
   onValue(ref(db, CONTROL_PATH), snap => {
     const data = snap.val();
     if (!data) return;
-    pumpControlMode = data.mode    || 'auto';
-    pumpUpState     = data.pump_up   || false;
-    pumpDownState   = data.pump_down || false;
+    pumpControlMode  = data.mode          || 'auto';
+    pumpNutrisiState = data.pump_nutrisi  || false;
+    pumpWaterState   = data.pump_water    || false;
     updatePumpControlUI();
   });
 }
