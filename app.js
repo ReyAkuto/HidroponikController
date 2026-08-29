@@ -609,48 +609,86 @@ async function loadRiwayat() {
   const tbody = $('riwayat-table-body');
   if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="table-empty pulsing">Memuat data dari Firebase…</td></tr>';
 
-  const limit  = parseInt($('riwayat-filter')?.value || '50');
-  const hRef   = query(ref(db, 'dashboard/history'), orderByKey(), limitToLast(limit));
+  // Ambil limit dari filter dropdown (default 100)
+  const limitEl = $('riwayat-filter');
+  const limit   = parseInt(limitEl?.value) || 100;
 
   try {
+    // Strategi: fetch tanpa orderByKey agar tidak bergantung index Firebase.
+    // Gunakan limitToLast saja — Firebase push-key sudah kronologis secara lexicographic.
+    const hRef = query(
+      ref(db, 'dashboard/history'),
+      limitToLast(limit)
+    );
+
     const snap = await get(hRef);
+
     if (!snap.exists()) {
       if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="table-empty">Belum ada data tersimpan.</td></tr>';
+      // Reset summary
+      ['rsum-ph-avg','rsum-ph-minmax','rsum-tds-avg','rsum-tds-minmax','rsum-total']
+        .forEach(id => setText(id, '—'));
       return;
     }
 
+    // Kumpulkan semua child node ke array
     const rows = [];
-    snap.forEach(child => rows.push({ key: child.key, ...child.val() }));
-    rows.reverse(); // newest first
+    snap.forEach(child => {
+      const val = child.val();
+      if (val && typeof val === 'object') {
+        rows.push({ key: child.key, ...val });
+      }
+    });
 
-    // Summary stats
-    const phs  = rows.map(r => r.ph).filter(v => v != null);
-    const tdss = rows.map(r => r.tds).filter(v => v != null);
+    console.log(`[Riwayat] Berhasil memuat ${rows.length} data dari Firebase`);
+
+    // Urutkan dari terbaru ke terlama berdasarkan timestamp (ts)
+    // Fallback ke push-key jika ts tidak ada
+    rows.sort((a, b) => {
+      const ta = a.ts ?? 0;
+      const tb = b.ts ?? 0;
+      return tb - ta; // descending (terbaru di atas)
+    });
+
+    // ── Summary stats ─────────────────────────────────────
+    const phs  = rows.map(r => r.ph).filter(v => v != null && !isNaN(v));
+    const tdss = rows.map(r => r.tds).filter(v => v != null && !isNaN(v));
 
     if (phs.length) {
-      const avg = v => (v.reduce((a,b) => a+b, 0) / v.length).toFixed(2);
-      setText('rsum-ph-avg',    avg(phs));
-      setText('rsum-ph-minmax', `${Math.min(...phs).toFixed(2)} / ${Math.max(...phs).toFixed(2)}`);
-      setText('rsum-tds-avg',   Math.round(tdss.reduce((a,b)=>a+b,0)/tdss.length) + ' ppm');
-      setText('rsum-tds-minmax',`${Math.round(Math.min(...tdss))} / ${Math.round(Math.max(...tdss))}`);
-      setText('rsum-total',     rows.length + ' data');
+      const avg = arr => (arr.reduce((a, b) => a + b, 0) / arr.length).toFixed(2);
+      setText('rsum-ph-avg',     avg(phs));
+      setText('rsum-ph-minmax',  `${Math.min(...phs).toFixed(2)} / ${Math.max(...phs).toFixed(2)}`);
     }
+    if (tdss.length) {
+      setText('rsum-tds-avg',    Math.round(tdss.reduce((a, b) => a + b, 0) / tdss.length) + ' ppm');
+      setText('rsum-tds-minmax', `${Math.round(Math.min(...tdss))} / ${Math.round(Math.max(...tdss))} ppm`);
+    }
+    setText('rsum-total', rows.length + ' data');
 
-    // Riwayat chart
+    // ── Riwayat Chart ─────────────────────────────────────
+    // Tampilkan maks 150 titik di grafik (oldest→newest = kiri→kanan)
     const rCtx = $('riwayatChart');
     if (rCtx) {
-      const labels   = rows.slice(0,80).reverse().map(r => fmtTime(r.ts));
-      const phData   = rows.slice(0,80).reverse().map(r => r.ph);
-      const tdsData  = rows.slice(0,80).reverse().map(r => r.tds);
+      const chartRows = rows.slice(0, 150).reverse(); // balik ke ascending untuk grafik
+      const labels    = chartRows.map(r => {
+        if (!r.ts) return r.key?.slice(-6) ?? '—';
+        const d = new Date(r.ts);
+        const p = n => String(n).padStart(2, '0');
+        return `${p(d.getDate())}/${p(d.getMonth()+1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+      });
+      const phData  = chartRows.map(r => r.ph  ?? null);
+      const tdsData = chartRows.map(r => r.tds ?? null);
 
       if (riwayatChart) { riwayatChart.destroy(); riwayatChart = null; }
       riwayatChart = new Chart(rCtx, {
         type: 'line',
         data: { labels, datasets: [
           { label: 'pH', data: phData, borderColor: '#3A8F60', borderWidth: 2,
-            pointRadius: 0, tension: 0.4, fill: false, yAxisID: 'yph' },
+            pointRadius: chartRows.length > 60 ? 0 : 2, tension: 0.4, fill: false, yAxisID: 'yph',
+            spanGaps: true },
           { label: 'TDS', data: tdsData, borderColor: '#2E5DA8', borderWidth: 2,
-            pointRadius: 0, tension: 0.4, fill: false, yAxisID: 'ytds' },
+            pointRadius: chartRows.length > 60 ? 0 : 2, tension: 0.4, fill: false, yAxisID: 'ytds',
+            spanGaps: true },
         ]},
         options: {
           responsive: true, maintainAspectRatio: false, animation: { duration: 300 },
@@ -658,34 +696,47 @@ async function loadRiwayat() {
           plugins: { legend: { display: false }, tooltip: {
             backgroundColor: '#fff', titleColor: '#181C19', bodyColor: '#4E5C52',
             borderColor: 'rgba(0,0,0,0.09)', borderWidth: 1, padding: 10,
+            callbacks: {
+              label: ctx => {
+                const unit = ctx.datasetIndex === 0 ? ' pH' : ' ppm';
+                return ` ${ctx.dataset.label}: ${ctx.formattedValue}${unit}`;
+              }
+            }
           }},
           scales: {
             x:    { grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { color: '#8A9690', font: { size: 10 }, maxTicksLimit: 10 } },
-            yph:  { position: 'left',  ticks: { color: '#3A8F60', font: { size: 10 } }, title: { display: true, text: 'pH', color: '#3A8F60', font: { size: 10 } } },
+            yph:  { position: 'left',  grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { color: '#3A8F60', font: { size: 10 } }, title: { display: true, text: 'pH', color: '#3A8F60', font: { size: 10 } } },
             ytds: { position: 'right', grid: { display: false }, ticks: { color: '#2E5DA8', font: { size: 10 } }, title: { display: true, text: 'ppm', color: '#2E5DA8', font: { size: 10 } } },
           }
         }
       });
     }
 
-    // Table
+    // ── Table (semua rows, terbaru di atas) ───────────────
     if (tbody) {
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="table-empty">Tidak ada data ditemukan.</td></tr>';
+        return;
+      }
       tbody.innerHTML = rows.map(r => {
-        const phs = phStatus(r.ph);
+        const ps = phStatus(r.ph);
+        const phVal  = r.ph  != null ? Number(r.ph).toFixed(2)  : '—';
+        const tdsVal = r.tds != null ? Number(r.tds).toFixed(1) : '—';
         return `<tr>
           <td>${fmtDate(r.ts)}</td>
           <td>${fmtTime(r.ts)}</td>
-          <td class="${phs.cssClass === 'danger' ? 'td-danger' : phs.cssClass === 'warn' ? 'td-warn' : ''}">${r.ph?.toFixed(2) ?? '—'}</td>
-          <td>${r.tds?.toFixed(1) ?? '—'}</td>
-          <td>${r.ph_adc ?? '—'}</td>
+          <td class="${ps.cssClass === 'danger' ? 'td-danger' : ps.cssClass === 'warn' ? 'td-warn' : ''}">${phVal}</td>
+          <td>${tdsVal}</td>
+          <td>${r.ph_adc  ?? '—'}</td>
           <td>${r.tds_adc ?? '—'}</td>
-          <td>${r.mode ?? '—'}</td>
-          <td><span class="table-badge ${phs.cssClass}">${phs.label}</span></td>
+          <td>${r.mode    ?? '—'}</td>
+          <td><span class="table-badge ${ps.cssClass}">${ps.label}</span></td>
         </tr>`;
       }).join('');
     }
+
   } catch(e) {
-    console.error('loadRiwayat error:', e);
+    console.error('[Riwayat] Error memuat data:', e);
     if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="table-empty">Gagal memuat: ${e.message}</td></tr>`;
   }
 }
